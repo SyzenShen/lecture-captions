@@ -574,7 +574,7 @@ PAGE = r"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name
 :root{--bg:#fafaf8;--fg:#1a1a1a;--dim:#8a8a85;--bar:#ecece8;--btn:#fff;--bd:#cfcfc8;--acc:#1a56db;--ok:#177245}
 @media(prefers-color-scheme:dark){:root{--bg:#18181a;--fg:#f2f2ee;--dim:#8d8d96;--bar:#242428;--btn:#2e2e33;--bd:#45454c;--acc:#7aa7ff;--ok:#5fd08f}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"PingFang SC",system-ui,sans-serif}
-header{position:sticky;top:0;z-index:2;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--bar);border-bottom:1px solid var(--bd)}
+#top{position:sticky;top:0;z-index:2}header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--bar);border-bottom:1px solid var(--bd)}
 button{font:inherit;font-size:15px;padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--btn);color:var(--fg);cursor:pointer}
 button:hover{border-color:var(--acc)}button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 #msg{margin-left:auto;color:var(--ok);font-size:14px}.hint{color:var(--dim);font-size:13px}
@@ -582,10 +582,15 @@ main{padding:12px 16px 90px;max-width:1100px;margin:0 auto;font-size:var(--fs,26
 .e{margin:0 0 .9em}.ts{color:var(--dim);font-size:.5em;margin-right:.6em;font-variant-numeric:tabular-nums}
 .zh{font-weight:700;margin-top:.15em}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
 #partial{color:var(--dim)}
+.e.q{border-left:4px solid var(--acc);padding-left:.55em}
+#qbar{padding:8px 16px;background:var(--bar);border-bottom:1px solid var(--bd);font-size:15px;line-height:1.35}
+.qt{color:var(--dim);font-size:12px;letter-spacing:.04em}#qlist div{margin-top:3px;cursor:pointer}#qlist div:first-child{font-weight:600}
+#qlist .t{color:var(--dim);font-size:12px;margin-right:.5em;font-variant-numeric:tabular-nums}.e.flash{background:rgba(26,86,219,.14)}
 body.paused main{opacity:.45}#pz.on{background:#d97706;border-color:#d97706;color:#fff}
 </style></head><body>
-<header><button id="pz">⏸ 暂停</button><button id="tz">隐藏中文</button><button id="sv">保存 .md</button><button id="m">A−</button><button id="p">A+</button>
+<div id="top"><header><button id="pz">⏸ 暂停</button><button id="tz">隐藏中文</button><button id="sv">保存 .md</button><button id="m">A−</button><button id="p">A+</button>
 <span class="hint">快捷键：p 暂停 · c 隐藏/显示中文 · s 保存</span><span id="msg"></span></header>
+<div id="qbar" hidden><span class="qt">最近的问题</span><div id="qlist"></div></div></div>
 <main id="log"><div id="partial"></div></main>
 <script>
 const log=document.getElementById("log"),part=document.getElementById("partial"),tz=document.getElementById("tz"),msg=document.getElementById("msg");
@@ -600,10 +605,14 @@ function setPaused(p){document.body.classList.toggle("paused",p);const b=documen
 async function save(){try{const r=await (await fetch("/save",{method:"POST"})).json();flash("✓ 已保存 "+r.n+" 句 → "+r.path)}catch(e){flash("保存失败")}}
 tz.onclick=toggle;document.getElementById("pz").onclick=pause;document.getElementById("sv").onclick=save;document.getElementById("m").onclick=()=>size(-2);document.getElementById("p").onclick=()=>size(2);
 addEventListener("keydown",e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;if(e.key==="c")toggle();if(e.key==="p")pause();if(e.key==="s")save()});
-function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=document.createElement("div");d.className="e";
+const qs=[];
+function renderQ(){const bar=document.getElementById("qbar"),box=document.getElementById("qlist");bar.hidden=!qs.length;box.textContent="";
+ qs.slice(-3).reverse().forEach(x=>{const r=document.createElement("div"),t=document.createElement("span");t.className="t";t.textContent=x.ts;r.append(t,document.createTextNode(x.q));
+  r.onclick=()=>{x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
+function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
  const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,document.createTextNode(ev.en));
  if(ev.zh){const z=document.createElement("div");z.className="zh";z.textContent=ev.zh;d.append(z)}
- log.insertBefore(d,part);if(near)scrollTo(0,document.body.scrollHeight)}
+ log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}if(near)scrollTo(0,document.body.scrollHeight)}
 const es=new EventSource("/events");
 es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
 paint();
