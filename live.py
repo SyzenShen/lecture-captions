@@ -125,7 +125,8 @@ class Output:
         self.md_path = os.path.join(MD_DIR, os.path.basename(path).replace(".txt", ".md"))
         self.topic = ""
         self.started = datetime.now()
-        self.entries = []          # (time, english, chinese, question sentence or "")
+        self.entries = []          # dicts: id (= index), ts, en, zh ("" until translated), q (question sentence or "")
+        self.printed_id = None     # the sentence whose English was printed last (its Chinese belongs right under it)
         self.lock = threading.Lock()
         self.subs = []             # web clients (queues) receiving live events
         self.partial_shown = False
@@ -151,21 +152,37 @@ class Output:
         sys.stdout.flush()
         self.partial_shown = True
 
-    def emit(self, en, zh):
+    def emit(self, en, zh=""):
+        """Show an English sentence right away; its translation is attached later with set_zh()."""
         self._clear_partial()
         ts = datetime.now().strftime("%H:%M:%S")
         q = extract_question(en)
         with self.lock:
-            self.entries.append((ts, en, zh, q))
-            self.broadcast({"type": "final", "ts": ts, "en": en, "zh": zh, "q": q})
+            sid = len(self.entries)
+            self.entries.append({"id": sid, "ts": ts, "en": en, "zh": zh, "q": q})
+            self.broadcast({"type": "final", "id": sid, "ts": ts, "en": en, "zh": zh, "q": q})
         print(f"\n\033[90m{ts}\033[0m  {en}")
         if zh and self.show_zh:
             print(f"          \033[1m{zh}\033[0m", flush=True)   # bold, default (black) colour
+        self.printed_id = sid
         self.f.write(f"[{ts}] {en}\n")
         if zh:
             self.f.write(f"         {zh}\n")
         self.f.flush()
+        return sid
 
+    def set_zh(self, sid, zh):
+        """The translation of sentence `sid` is ready."""
+        with self.lock:
+            self.entries[sid]["zh"] = zh
+            en = self.entries[sid]["en"]
+            self.broadcast({"type": "zh", "id": sid, "zh": zh})
+        if self.show_zh:
+            self._clear_partial()
+            lead = "          " if self.printed_id == sid else f"          \033[90m↳ {en[:28]}…\033[0m "
+            print(f"{lead}\033[1m{zh}\033[0m", flush=True)
+        self.f.write(f"         {zh}\n")
+        self.f.flush()
 
     def save_md(self):
         """Write everything captured so far to a Markdown file (overwrites the previous snapshot)."""
@@ -175,12 +192,12 @@ class Output:
         if self.topic:
             lines += [f"> 主题提示：{self.topic}", ""]
         lines += [f"共 {len(entries)} 句 · 保存于 {datetime.now():%H:%M:%S}", "", "---", ""]
-        for ts, en, zh, q in entries:
-            lines.append(f"**{ts}** {en}  ")
-            if zh:
-                lines.append(f"{zh}")
+        for e in entries:
+            lines.append(f"**{e['ts']}** {e['en']}  ")
+            if e["zh"]:
+                lines.append(e["zh"])
             lines.append("")
-        asked = [(ts, q) for ts, _, _, q in entries if q]
+        asked = [(e["ts"], e["q"]) for e in entries if e["q"]]
         if asked:                                        # a review list of what the lecturer asked
             lines += ["---", "", f"## 课堂提问（{len(asked)}）", ""] + [f"- **{ts}** {q}" for ts, q in asked] + [""]
         os.makedirs(os.path.dirname(self.md_path), exist_ok=True)
@@ -329,14 +346,15 @@ def worker(q, model, translate, out, seg):
 
     def translator_loop():
         while True:
-            t = tq.get()
-            if t is None:
+            item = tq.get()
+            if item is None:
                 return
+            sid, t = item
             try:
                 zh = clean_zh(translate(t), t)
             except Exception as e:  # keep captions flowing if translation fails
                 zh = f"(translation error: {e})"
-            out.emit(t, zh)
+            out.set_zh(sid, zh)
 
     tt = threading.Thread(target=translator_loop, daemon=True)
     tt.start()
@@ -351,7 +369,7 @@ def worker(q, model, translate, out, seg):
         if not t or t == last or HALLUCINATION.fullmatch(t):
             return
         last = t
-        tq.put(t)
+        tq.put((out.emit(t), t))      # the English shows at once; the translator thread adds the Chinese when ready
 
     def finish():
         nonlocal text, secs
@@ -580,7 +598,7 @@ button:hover{border-color:var(--acc)}button.on{background:var(--acc);border-colo
 #msg{margin-left:auto;color:var(--ok);font-size:14px}.hint{color:var(--dim);font-size:13px}
 main{padding:12px 16px 90px;max-width:1100px;margin:0 auto;font-size:var(--fs,26px);line-height:1.45}
 .e{margin:0 0 .9em}.ts{color:var(--dim);font-size:.5em;margin-right:.6em;font-variant-numeric:tabular-nums}
-.zh{font-weight:700;margin-top:.15em}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
+.zh{font-weight:700;margin-top:.15em}.zh.wait{color:var(--dim);font-weight:400}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
 #partial{color:var(--dim)}
 .e.q{border-left:4px solid var(--acc);padding-left:.55em}
 /* focus mode: only the last three sentences, bigger; the Chinese opens per sentence on click */
@@ -619,10 +637,10 @@ function renderQ(){const bar=document.getElementById("qbar"),box=document.getEle
   r.onclick=()=>{if(document.body.classList.contains("focus"))setFocus(false);x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
 function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
  const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,document.createTextNode(ev.en));
- if(ev.zh){const z=document.createElement("div");z.className="zh";z.textContent=ev.zh;d.append(z)}
+ d.dataset.id=ev.id;const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");z.textContent=ev.zh||"…";d.append(z);
  log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
 const es=new EventSource("/events");
-es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
+es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="zh"){const z=document.querySelector('.e[data-id="'+ev.id+'"] .zh');if(z){z.textContent=ev.zh;z.classList.remove("wait")}return}if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
 paint();
 </script></body></html>"""
 
@@ -658,8 +676,8 @@ def start_web(out, port):
                 out.subs.append(sub)
             try:
                 self.wfile.write(f"data: {json.dumps({'type': 'state', 'paused': out.paused})}\n\n".encode())
-                for ts, en, zh, q in backlog:
-                    ev = {"type": "final", "ts": ts, "en": en, "zh": zh, "q": q}
+                for e in backlog:
+                    ev = {"type": "final", **e}
                     self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode())
                 self.wfile.flush()
                 while True:
