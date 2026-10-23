@@ -22,6 +22,8 @@ from datetime import datetime
 
 import numpy as np
 
+from questions import extract_question
+
 SR = 16000
 BLOCK = 512                       # 32 ms
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -123,7 +125,7 @@ class Output:
         self.md_path = os.path.join(MD_DIR, os.path.basename(path).replace(".txt", ".md"))
         self.topic = ""
         self.started = datetime.now()
-        self.entries = []          # (time, english, chinese)
+        self.entries = []          # (time, english, chinese, question sentence or "")
         self.lock = threading.Lock()
         self.subs = []             # web clients (queues) receiving live events
         self.partial_shown = False
@@ -152,9 +154,10 @@ class Output:
     def emit(self, en, zh):
         self._clear_partial()
         ts = datetime.now().strftime("%H:%M:%S")
+        q = extract_question(en)
         with self.lock:
-            self.entries.append((ts, en, zh))
-            self.broadcast({"type": "final", "ts": ts, "en": en, "zh": zh})
+            self.entries.append((ts, en, zh, q))
+            self.broadcast({"type": "final", "ts": ts, "en": en, "zh": zh, "q": q})
         print(f"\n\033[90m{ts}\033[0m  {en}")
         if zh and self.show_zh:
             print(f"          \033[1m{zh}\033[0m", flush=True)   # bold, default (black) colour
@@ -172,11 +175,14 @@ class Output:
         if self.topic:
             lines += [f"> 主题提示：{self.topic}", ""]
         lines += [f"共 {len(entries)} 句 · 保存于 {datetime.now():%H:%M:%S}", "", "---", ""]
-        for ts, en, zh in entries:
+        for ts, en, zh, q in entries:
             lines.append(f"**{ts}** {en}  ")
             if zh:
                 lines.append(f"{zh}")
             lines.append("")
+        asked = [(ts, q) for ts, _, _, q in entries if q]
+        if asked:                                        # a review list of what the lecturer asked
+            lines += ["---", "", f"## 课堂提问（{len(asked)}）", ""] + [f"- **{ts}** {q}" for ts, q in asked] + [""]
         os.makedirs(os.path.dirname(self.md_path), exist_ok=True)
         with open(self.md_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -635,8 +641,8 @@ def start_web(out, port):
                 out.subs.append(sub)
             try:
                 self.wfile.write(f"data: {json.dumps({'type': 'state', 'paused': out.paused})}\n\n".encode())
-                for ts, en, zh in backlog:
-                    ev = {"type": "final", "ts": ts, "en": en, "zh": zh}
+                for ts, en, zh, q in backlog:
+                    ev = {"type": "final", "ts": ts, "en": en, "zh": zh, "q": q}
                     self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode())
                 self.wfile.flush()
                 while True:
