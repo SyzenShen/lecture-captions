@@ -1,0 +1,16 @@
+# Everything is ignored unless it is listed below. Recordings, transcripts, the virtualenv, local config and
+# personal prompt files therefore can never be committed by accident.
+*
+!.gitignore
+!README.md
+!README.zh-CN.md
+!LICENSE
+!live.py
+!run.sh
+!setup.sh
+!fetch_argos_zh.py
+!requirements.txt
+!config.example.sh
+!prompts/
+prompts/*
+!prompts/example_*.txt

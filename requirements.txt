@@ -1,0 +1,7 @@
+faster-whisper>=1.2,<2
+sounddevice>=0.5
+sentencepiece>=0.2
+numpy>=1.26,<2
+certifi
+# optional, only for --translator claude:
+# anthropic
