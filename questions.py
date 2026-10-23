@@ -19,6 +19,13 @@ _INVERTED = re.compile(
 # "How many ...", "What about ...", "What if ..."  ("who is ..." is NOT here: it is usually a relative clause)
 _WH_PHRASE = re.compile(r"^(?:what|why|how|who|where|when|which)\s+(?:about|if|else|many|much|long|kind|type|exactly)\b", re.I)
 
+# "What do you think", "How would you detect it", "Why does the cell ...": wh-word + auxiliary + subject
+_WH_INVERTED = re.compile(
+    rf"^(?:what|why|how|who|where|when|which)\s+(?:do|does|did|can|could|would|should|will|have|has)\s+"
+    r"(?:you|we|i|they|he|she|it|this|that|the|a|an|these|those|people|any(?:one|body)|every(?:one|body))\b", re.I)
+# "Who knows ...", "Who can tell me ..."  ("who is ..." is NOT here: it is usually a relative clause)
+_WHO_ASKING = re.compile(r"^who\s+(?:knows|can|could|would|wants|remembers|thinks|has|here|else)\b", re.I)
+
 MIN_WORDS = 3                  # after stripping "so", "and", ...; drops "Why?", "So why?", "Yeah?"
 MAX_WORDS_WITHOUT_MARK = 18    # a long sentence starting with "how" is usually a statement
 MAX_WORDS_SHOWN = 24           # long merged sentences ending in "?": show only the end
@@ -37,7 +44,7 @@ def is_question(sentence):
         return True
     if words > MAX_WORDS_WITHOUT_MARK or _NEGATED.match(core):
         return False
-    return bool(_INVERTED.match(core) or _WH_PHRASE.match(core))
+    return bool(_INVERTED.match(core) or _WH_PHRASE.match(core) or _WH_INVERTED.match(core) or _WHO_ASKING.match(core))
 
 
 def extract_question(text):

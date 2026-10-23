@@ -28,6 +28,10 @@ class IsQuestion(unittest.TestCase):
             ("Are there any questions", True),
             ("How many pieces of information do we have in each position", True),
             ("What about the other strand", True),
+            ("Who knows how many amino acids there are in proteins.", True),
+            ("Who can tell me something about this", True),
+            ("How would you detect it in a single cell.", True),
+            ("What do you think", True),
         ])
 
     def test_filler_is_not_a_question(self):
@@ -46,6 +50,8 @@ class IsQuestion(unittest.TestCase):
             ("What we see here is a protein.", False),
             ("How it works is complicated.", False),
             ("who is also kind of crazy about it.", False),
+            ("Who we are is defined by our genes.", False),
+            ("What do not know is the mechanism.", False),
             ("We use proteins for DNA replication.", False),
             ("", False),
         ])
