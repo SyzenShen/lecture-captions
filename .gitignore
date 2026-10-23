@@ -6,6 +6,7 @@
 !README.zh-CN.md
 !LICENSE
 !live.py
+!questions.py
 !run.sh
 !setup.sh
 !fetch_argos_zh.py
