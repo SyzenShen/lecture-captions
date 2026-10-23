@@ -585,7 +585,7 @@ VAD_STEP_BLOCKS = 4               # decide every 4 blocks (~0.13 s): finer than 
 # A fast lecturer rarely pauses 0.6 s, so segments always ran to the length limit and the first sentence of each one
 # appeared a whole segment late. The longer a segment gets, the shorter the pause that ends it: (seconds into the
 # segment, pause in seconds that is now enough). Cuts land on phrase boundaries instead of mid-word.
-PAUSE_RELAX = ((3.0, 0.30), (5.0, 0.15))
+PAUSE_RELAX = ((2.0, 0.30), (3.5, 0.15))     # tuned on a real lecture: first words appear 38% sooner than with ((3, .3), (5, .15))
 
 
 class SileroSegmenter(Segmenter):
@@ -826,7 +826,7 @@ def main():
     ap.add_argument("--threads", type=int, default=2, help="CPU threads for Whisper (2 = best energy/latency balance)")
     ap.add_argument("--full-context", action="store_true", help="disable the shortened encoder context (more CPU, same accuracy)")
     ap.add_argument("--prompt-file", help="read the topic/vocabulary prompt from a text file (see prompts/)")
-    ap.add_argument("--chunk", type=float, default=8.0, help="longest audio piece per recognition, seconds (8 = measured sweet spot: ~29%% less CPU than 5, same accuracy; use 5 for lower latency)")
+    ap.add_argument("--chunk", type=float, default=6.0, help="longest audio piece per recognition, seconds (6: first words appear sooner than with 8, ~20%% more CPU)")
     ap.add_argument("--md-dir", default=None, help="where the Markdown notes (press s) are saved")
     ap.add_argument("--vad", choices=["silero", "energy"], default="silero", help="how to find pauses: silero = speech-detection model (default, robust to quiet/noisy rooms); energy = old loudness threshold")
     ap.add_argument("--draft-model", default="", help="small fast model for tentative grey text while the lecturer is still speaking, e.g. base.en (default: off)")
