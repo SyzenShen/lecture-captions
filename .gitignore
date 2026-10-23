@@ -15,3 +15,6 @@
 !prompts/
 prompts/*
 !prompts/example_*.txt
+!tests/
+tests/*
+!tests/test_*.py
