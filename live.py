@@ -777,9 +777,12 @@ def main():
     if a.file:
         from faster_whisper.audio import decode_audio
         audio = decode_audio(a.file, sampling_rate=SR)
-        for i in range(0, len(audio) - BLOCK, BLOCK):
-            if a.realtime:
-                time.sleep(BLOCK / SR)
+        t_start = time.perf_counter()
+        for n, i in enumerate(range(0, len(audio) - BLOCK, BLOCK)):
+            if a.realtime:                    # pace by an absolute schedule: sleep() oversleeps ~6 ms per call, which drifts ~19 %
+                wait = t_start + n * BLOCK / SR - time.perf_counter()
+                if wait > 0:
+                    time.sleep(wait)
             chunk = seg.feed(audio[i:i + BLOCK])
             if chunk is not None:
                 q.put(chunk)
