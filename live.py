@@ -217,6 +217,67 @@ class Output:
         print(f"\n\033[32m✓ 已保存 {n} 句 → {self.md_path}\033[0m", flush=True)
 
 
+# ---------------------------------------------------------------- display of tentative text
+class Display:
+    """The grey "still being worked on" line: the unfinished sentence (from the accurate recogniser) followed by
+    quick drafts of speech that the accurate recogniser has not reached yet. Drafts are keyed by the start time of
+    the segment they belong to, so the accurate result can replace exactly its own draft."""
+
+    def __init__(self, out):
+        self.out = out
+        self.pending = ""
+        self.drafts = {}
+        self.lock = threading.Lock()
+
+    def _show(self):
+        shown = " ".join([self.pending] + [d for _, d in sorted(self.drafts.items())]).strip()
+        if shown:
+            self.out.partial(shown)
+        else:
+            self.out._clear_partial()
+
+    def set_pending(self, text):
+        with self.lock:
+            self.pending = text
+            self._show()
+
+    def set_draft(self, key, text):
+        with self.lock:
+            self.drafts[key] = text
+            self._show()
+
+    def refined(self, upto):
+        """The accurate recogniser has finished the segment starting at `upto`: it and any earlier draft are obsolete."""
+        with self.lock:
+            for k in [k for k in self.drafts if k <= upto]:
+                del self.drafts[k]
+            self._show()                  # repaint now: a segment with no usable result must not leave its draft behind
+
+    def clear(self):
+        with self.lock:
+            self.pending, self.drafts = "", {}
+            self._show()
+
+
+def draft_loop(model, seg, display, every, stop):
+    """Quick tentative text for the segment being spoken right now, refreshed every `every` seconds."""
+    last_key, last_len = None, 0
+    while not stop.wait(every):
+        snap = seg.snapshot()
+        if snap is None:
+            continue
+        audio, start = snap
+        if len(audio) < SR:                       # less than a second of speech: nothing worth showing yet
+            continue
+        key = round(start, 2)
+        if key == last_key and len(audio) - last_len < SR // 2:
+            continue                              # barely any new audio since the last draft
+        text = transcribe(model, audio, "", beam=1)
+        last_key, last_len = key, len(audio)
+        if len(text) >= 2 and not HALLUCINATION.fullmatch(text):
+            display.set_draft(key, text)
+
+
 # ---------------------------------------------------------------- worker
 SENTENCE_END = re.compile(r"[.?!][\"')\]]*$")
 HALLUCINATION = re.compile(r"[\W_]*(you|thank you\.?|thanks for watching\.?)?[\W_]*", re.I)
@@ -286,10 +347,10 @@ def clean_prompt(p):
     return ascii_p
 
 
-def transcribe(model, audio, context):
+def transcribe(model, audio, context, beam=None):
     prompt = PROMPT.strip() or None
     segs, _ = model.transcribe(
-        normalise(audio), language="en", beam_size=BEAM, vad_filter=True,
+        normalise(audio), language="en", beam_size=beam or BEAM, vad_filter=True,
         condition_on_previous_text=False, initial_prompt=prompt, no_speech_threshold=0.6,
         max_new_tokens=int(len(audio) / SR * 7) + 20,   # a repetition loop would otherwise run to 448 tokens (~10 s)
         temperature=0.0,   # no retry-at-higher-temperature fallback: it can make one chunk take 5x longer
@@ -337,7 +398,7 @@ def split_sentences(text):
     return [x for x in re.split(r"(?<=[.?!])\s+", text.strip()) if x]
 
 
-def worker(q, model, translate, out, seg):
+def worker(q, model, translate, out, seg, display):
     context, last = "", ""
     text, secs, end_t = "", 0.0, 0.0     # unfinished tail waiting for a continuation, and when its speech ended
 
@@ -375,7 +436,7 @@ def worker(q, model, translate, out, seg):
         nonlocal text, secs
         emit(text)
         text, secs = "", 0.0
-        out._clear_partial()
+        display.set_pending("")
 
     def gap_limit():
         return GAP_UNFINISHED if looks_unfinished(text) else GAP_COMPLETE
@@ -396,6 +457,7 @@ def worker(q, model, translate, out, seg):
                 return
             if item == "flush":
                 finish()
+                display.clear()
                 continue
             audio, start_t, e_t, forced = item
             if os.environ.get('LIVE_DEBUG'):
@@ -407,6 +469,7 @@ def worker(q, model, translate, out, seg):
             if os.environ.get('LIVE_DEBUG'):
                 print(f'[dbg]   waited {seg.t - e_t - 0:.1f}s after speech end, transcribe {time.time() - t0:.1f}s '
                       f'for {len(audio) / SR:.1f}s audio, forced={forced}', file=sys.stderr)
+            display.refined(round(start_t, 2))     # the accurate result replaces this segment's quick draft
             if len(new) < 2 or HALLUCINATION.fullmatch(new):
                 continue
             context += " " + new          # raw Whisper output keeps its casing/punctuation (good prompt style)
@@ -425,7 +488,7 @@ def worker(q, model, translate, out, seg):
             if not forced and not looks_unfinished(text) and len(text.split()) >= 8:
                 finish()
                 continue
-            out.partial(text)
+            display.set_pending(text)
 
     try:
         run()
@@ -485,6 +548,12 @@ class Segmenter:
             return self.split_quietest()
         return None
 
+    def snapshot(self):
+        """(audio so far, start time) of the segment being spoken right now, or None. Safe to call from another thread."""
+        if not self.speaking or not self.buf:
+            return None
+        return np.concatenate(list(self.buf)), self.speech_start
+
     def reset(self):
         """Forget any half-heard utterance (used when resuming after a pause)."""
         self.buf, self.buf_e, self.silent, self.speaking = [], [], 0, False
@@ -513,6 +582,10 @@ class Segmenter:
 VAD_START, VAD_KEEP = 0.5, 0.35   # Silero speech-probability thresholds: start talking / keep talking (hysteresis)
 VAD_WINDOW_BLOCKS = 94            # ~3 s of context behind each VAD decision
 VAD_STEP_BLOCKS = 4               # decide every 4 blocks (~0.13 s): finer than the 0.26 s I tested, a bit more CPU
+# A fast lecturer rarely pauses 0.6 s, so segments always ran to the length limit and the first sentence of each one
+# appeared a whole segment late. The longer a segment gets, the shorter the pause that ends it: (seconds into the
+# segment, pause in seconds that is now enough). Cuts land on phrase boundaries instead of mid-word.
+PAUSE_RELAX = ((3.0, 0.30), (5.0, 0.15))
 
 
 class SileroSegmenter(Segmenter):
@@ -565,11 +638,19 @@ class SileroSegmenter(Segmenter):
         self.buf.append(block)
         self.buf_e.append(e)
         self.silent = 0 if is_speech else self.silent + 1
-        if self.silent >= self.pause_blocks:
+        if self.silent >= self._needed_silence():
             return Segmenter.flush(self)
         if len(self.buf) >= self.max_blocks:
             return self.split_quietest()
         return None
+
+    def _needed_silence(self):
+        """Blocks of silence that end the segment: the full pause when it is short, less as it grows."""
+        need, secs = self.pause_blocks, len(self.buf) * BLOCK / SR
+        for after, pause in PAUSE_RELAX:
+            if secs >= after:
+                need = min(need, max(2, int(pause * SR / BLOCK)))
+        return need
 
     def flush(self):
         """Judge what is still pending, then hand over finished chunks one per call (call until None)."""
@@ -748,6 +829,9 @@ def main():
     ap.add_argument("--chunk", type=float, default=8.0, help="longest audio piece per recognition, seconds (8 = measured sweet spot: ~29%% less CPU than 5, same accuracy; use 5 for lower latency)")
     ap.add_argument("--md-dir", default=None, help="where the Markdown notes (press s) are saved")
     ap.add_argument("--vad", choices=["silero", "energy"], default="silero", help="how to find pauses: silero = speech-detection model (default, robust to quiet/noisy rooms); energy = old loudness threshold")
+    ap.add_argument("--draft-model", default="", help="small fast model for tentative grey text while the lecturer is still speaking, e.g. base.en (default: off)")
+    ap.add_argument("--draft-every", type=float, default=1.0, help="seconds between drafts")
+    ap.add_argument("--draft-threads", type=int, default=2)
     ap.add_argument("--beam", type=int, default=5, help="beam size (1 = fastest, 5 = more accurate)")
     ap.add_argument("--no-record", action="store_true", help="do not save the session audio (.wav)")
     ap.add_argument("--web", action="store_true", help="open a local page with big captions and one-click buttons")
@@ -789,7 +873,13 @@ def main():
     except Exception as ex:                              # never leave the class without captions
         print(f"⚠ Silero 语音检测不可用（{ex}），已退回音量断句。", flush=True)
         seg = Segmenter(max_len=a.chunk)
-    t = threading.Thread(target=worker, args=(q, model, translate, out, seg), daemon=True)
+    display = Display(out)
+    stop_drafts = threading.Event()
+    if a.draft_model:
+        print(f"Loading draft model {a.draft_model} ...", flush=True)
+        draft_model = WhisperModel(a.draft_model, device="cpu", compute_type="int8", cpu_threads=a.draft_threads)
+        threading.Thread(target=draft_loop, args=(draft_model, seg, display, a.draft_every, stop_drafts), daemon=True).start()
+    t = threading.Thread(target=worker, args=(q, model, translate, out, seg, display), daemon=True)
     t.start()
 
     if a.file:
@@ -808,6 +898,7 @@ def main():
             q.put(tail)
         q.put(None)
         t.join()
+        stop_drafts.set()
         out.save_md()
         print(f"\nSaved: {out.md_path}")
         return
@@ -879,6 +970,7 @@ def main():
             q.put(tail)
         q.put(None)
         t.join(timeout=30)
+        stop_drafts.set()
         restore()
         if wav is not None:
             wav.close()
