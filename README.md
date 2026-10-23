@@ -14,6 +14,8 @@ web page shows the result. Built by a non-native listener for a MacBook in the f
 - **Topic prompts** (`--prompt-file`): a short list of the lecture's vocabulary steers Whisper towards the right terms.
 - **Silero VAD** finds pauses, so it works on quiet recordings and in noisy rooms (a plain loudness threshold did not).
 - Saves the session audio and a running transcript (turn off with `--no-record`); press `s` for a Markdown file of the whole session.
+- **Questions are highlighted** (accent border) and the **three most recent are pinned** in a bar at the top, so you can see what is being discussed when the room starts talking. The Markdown notes end with a list of every question asked.
+- **Focus mode** (`f`): only the last three sentences, larger; click a sentence to open its Chinese. Read less, listen more; the full transcript is saved for after class.
 - Works on a recording too: `./run.sh --file lecture.mp3`.
 
 ## Install
@@ -36,6 +38,7 @@ macOS asks for microphone access for your terminal on first use.
 | `s` | save the session so far as Markdown (`notes/`, or `CAPTIONS_NOTES_DIR`) |
 | `c` | hide / show the Chinese |
 | `p` | pause / resume (the microphone is really closed while paused) |
+| `f` | focus mode: last three sentences only, Chinese on click (`c` then shows/hides all of them) |
 
 Useful options (`./run.sh --help` for all):
 
