@@ -583,36 +583,44 @@ main{padding:12px 16px 90px;max-width:1100px;margin:0 auto;font-size:var(--fs,26
 .zh{font-weight:700;margin-top:.15em}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
 #partial{color:var(--dim)}
 .e.q{border-left:4px solid var(--acc);padding-left:.55em}
+/* focus mode: only the last three sentences, bigger; the Chinese opens per sentence on click */
+body.focus .e:not(.vis){display:none}body.focus main{font-size:calc(var(--fs)*1.45)}body.focus .e{cursor:pointer}
+body.focus .zh{display:none}body.focus .e.open .zh,body.focus.zhall .zh{display:block;visibility:visible}
 #qbar{padding:8px 16px;background:var(--bar);border-bottom:1px solid var(--bd);font-size:15px;line-height:1.35}
 .qt{color:var(--dim);font-size:12px;letter-spacing:.04em}#qlist div{margin-top:3px;cursor:pointer}#qlist div:first-child{font-weight:600}
 #qlist .t{color:var(--dim);font-size:12px;margin-right:.5em;font-variant-numeric:tabular-nums}.e.flash{background:rgba(26,86,219,.14)}
 body.paused main{opacity:.45}#pz.on{background:#d97706;border-color:#d97706;color:#fff}
 </style></head><body>
-<div id="top"><header><button id="pz">⏸ 暂停</button><button id="tz">隐藏中文</button><button id="sv">保存 .md</button><button id="m">A−</button><button id="p">A+</button>
-<span class="hint">快捷键：p 暂停 · c 隐藏/显示中文 · s 保存</span><span id="msg"></span></header>
+<div id="top"><header><button id="pz">⏸ 暂停</button><button id="tz">隐藏中文</button><button id="fz">专注</button><button id="sv">保存 .md</button><button id="m">A−</button><button id="p">A+</button>
+<span class="hint">快捷键：p 暂停 · c 隐藏/显示中文 · f 专注 · s 保存</span><span id="msg"></span></header>
 <div id="qbar" hidden><span class="qt">最近的问题</span><div id="qlist"></div></div></div>
 <main id="log"><div id="partial"></div></main>
 <script>
 const log=document.getElementById("log"),part=document.getElementById("partial"),tz=document.getElementById("tz"),msg=document.getElementById("msg");
-let fs=26;try{fs=+localStorage.fs||26;if(localStorage.nozh==="1")document.body.classList.add("nozh")}catch(e){}
-function paint(){document.documentElement.style.setProperty("--fs",fs+"px");tz.textContent=document.body.classList.contains("nozh")?"显示中文":"隐藏中文";tz.classList.toggle("on",document.body.classList.contains("nozh"))}
-function toggle(){document.body.classList.toggle("nozh");try{localStorage.nozh=document.body.classList.contains("nozh")?"1":"0"}catch(e){}paint()}
+const fzb=document.getElementById("fz"),FOCUS_N=3;
+let fs=26;try{fs=+localStorage.fs||26;if(localStorage.nozh==="1")document.body.classList.add("nozh");if(localStorage.focus==="1")document.body.classList.add("focus")}catch(e){}
+function paint(){document.documentElement.style.setProperty("--fs",fs+"px");tz.textContent=document.body.classList.contains("nozh")?"显示中文":"隐藏中文";tz.classList.toggle("on",document.body.classList.contains("nozh"));
+ const f=document.body.classList.contains("focus"),z=document.body.classList.contains("zhall");fzb.textContent=f?"退出专注":"专注";fzb.classList.toggle("on",f);
+ if(f){tz.textContent=z?"收起中文":"显示全部中文";tz.classList.toggle("on",z)}}
+function layout(){const all=[...log.querySelectorAll(".e")];all.forEach((e,i)=>e.classList.toggle("vis",i>=all.length-FOCUS_N))}
+function setFocus(on){document.body.classList.toggle("focus",on);if(!on)document.body.classList.remove("zhall");try{localStorage.focus=on?"1":"0"}catch(e){}layout();paint();scrollTo(0,document.body.scrollHeight)}
+function toggle(){if(document.body.classList.contains("focus")){document.body.classList.toggle("zhall");paint();return}document.body.classList.toggle("nozh");try{localStorage.nozh=document.body.classList.contains("nozh")?"1":"0"}catch(e){}paint()}
 function size(d){fs=Math.min(60,Math.max(16,fs+d));try{localStorage.fs=fs}catch(e){}paint()}
 function flash(t){msg.textContent=t;setTimeout(()=>msg.textContent="",5000)}
 async function pause(){try{await fetch("/pause",{method:"POST"})}catch(e){flash("操作失败")}}
 function setPaused(p){document.body.classList.toggle("paused",p);const b=document.getElementById("pz");b.textContent=p?"▶ 继续":"⏸ 暂停";b.classList.toggle("on",p);
  document.title=p?"⏸ 课堂字幕（已暂停）":"课堂字幕";if(p)part.textContent=""}
 async function save(){try{const r=await (await fetch("/save",{method:"POST"})).json();flash("✓ 已保存 "+r.n+" 句 → "+r.path)}catch(e){flash("保存失败")}}
-tz.onclick=toggle;document.getElementById("pz").onclick=pause;document.getElementById("sv").onclick=save;document.getElementById("m").onclick=()=>size(-2);document.getElementById("p").onclick=()=>size(2);
-addEventListener("keydown",e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;if(e.key==="c")toggle();if(e.key==="p")pause();if(e.key==="s")save()});
+tz.onclick=toggle;fzb.onclick=()=>setFocus(!document.body.classList.contains("focus"));log.addEventListener("click",ev=>{if(!document.body.classList.contains("focus"))return;const e=ev.target.closest(".e");if(e)e.classList.toggle("open")});document.getElementById("pz").onclick=pause;document.getElementById("sv").onclick=save;document.getElementById("m").onclick=()=>size(-2);document.getElementById("p").onclick=()=>size(2);
+addEventListener("keydown",e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;if(e.key==="c")toggle();if(e.key==="f")setFocus(!document.body.classList.contains("focus"));if(e.key==="p")pause();if(e.key==="s")save()});
 const qs=[];
 function renderQ(){const bar=document.getElementById("qbar"),box=document.getElementById("qlist");bar.hidden=!qs.length;box.textContent="";
  qs.slice(-3).reverse().forEach(x=>{const r=document.createElement("div"),t=document.createElement("span");t.className="t";t.textContent=x.ts;r.append(t,document.createTextNode(x.q));
-  r.onclick=()=>{x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
+  r.onclick=()=>{if(document.body.classList.contains("focus"))setFocus(false);x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
 function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
  const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,document.createTextNode(ev.en));
  if(ev.zh){const z=document.createElement("div");z.className="zh";z.textContent=ev.zh;d.append(z)}
- log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}if(near)scrollTo(0,document.body.scrollHeight)}
+ log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
 const es=new EventSource("/events");
 es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
 paint();
