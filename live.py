@@ -401,10 +401,10 @@ def refiner(rq, model, q):
                 print(f"[dbg] refiner behind, skipped block {skipped[0]}", file=sys.stderr)
         block, audio = item
         t0 = time.time()
-        text = transcribe(model, audio, "", careful=True)
+        pieces = transcribe(model, audio, "", careful=True, as_segments=True)
         if os.environ.get("LIVE_DEBUG"):
             print(f"[dbg] refined block {block}: {len(audio) / SR:.1f}s audio in {time.time() - t0:.1f}s", file=sys.stderr)
-        sentences = split_sentences(text)
+        sentences = refined_sentences(pieces)
         if sentences:
             q.put(Refined(block, sentences))
 
@@ -499,7 +499,7 @@ def clean_prompt(p):
     return ascii_p
 
 
-def transcribe(model, audio, context, beam=None, careful=False):
+def transcribe(model, audio, context, beam=None, careful=False, as_segments=False):
     """careful=True is for long audio decoded once (the block refiner): retry at a higher temperature when the output
     looks like a repetition loop. The live path leaves it off because a retry can make one chunk take 5x longer."""
     prompt = PROMPT.strip() or None
@@ -525,9 +525,11 @@ def transcribe(model, audio, context, beam=None, careful=False):
                 print(f"[dbg] dropped non-English/prompt-echo {seg_text!r}", file=sys.stderr)
             continue
         keep.append(seg_text)
-    text = " ".join(keep).strip()
     # collapse "the structure of the structure of the structure of" style loops
-    return re.sub(r"(\b[\w' ,]{4,60}?\b)(?:[ ,]+\1\b){2,}", r"\1", text, flags=re.I)
+    loop = re.compile(r"(\b[\w' ,]{4,60}?\b)(?:[ ,]+\1\b){2,}", re.I)
+    if as_segments:
+        return [x for x in (loop.sub(r"\1", k).strip() for k in keep) if x]
+    return loop.sub(r"\1", " ".join(keep).strip())
 
 
 def looks_unfinished(text):
@@ -551,6 +553,28 @@ def join(prev, new):
 
 def split_sentences(text):
     return [x for x in re.split(r"(?<=[.?!])\s+", text.strip()) if x]
+
+
+def refined_sentences(segment_texts, max_words=30):
+    """Sentences for a refined block. Whisper sometimes returns a long stretch without any punctuation: break it at its
+    own segment boundaries, and as a last resort after max_words words."""
+    out, buf = [], ""
+    for seg_text in segment_texts:
+        buf = (buf + " " + seg_text).strip()
+        parts = split_sentences(buf)
+        if len(parts) > 1:
+            out.extend(parts[:-1])
+            buf = parts[-1]
+        if buf[-1:] in ".?!" or len(buf.split()) >= max_words // 2:
+            while len(buf.split()) > max_words:
+                words = buf.split()
+                out.append(" ".join(words[:max_words]))
+                buf = " ".join(words[max_words:])
+            out.append(buf)
+            buf = ""
+    if buf:
+        out.append(buf)
+    return out
 
 
 def worker(q, model, tq, out, seg, display):
@@ -593,6 +617,8 @@ def worker(q, model, tq, out, seg, display):
                 finish()
                 return
             if isinstance(item, Refined):
+                if text and cur_block == item.block:    # the lecture ended inside this block: its last sentence is not out yet
+                    finish()
                 for sid, en in out.replace_block(item.block, item.sentences, min_ratio=0.6):
                     tq.put((sid, en))
                 continue

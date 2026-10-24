@@ -74,5 +74,22 @@ class BlockAudioTests(unittest.TestCase):
         self.assertEqual(rq.get_nowait()[0], 7)
 
 
+class RefinedSentences(unittest.TestCase):
+    def test_punctuated_text_is_split_at_sentence_ends(self):
+        self.assertEqual(live.refined_sentences(["Hello there. How are you?", "Fine."]), ["Hello there.", "How are you?", "Fine."])
+
+    def test_a_sentence_split_over_two_segments_is_joined(self):
+        self.assertEqual(live.refined_sentences(["The structure of", "the protein is stable."]), ["The structure of the protein is stable."])
+
+    def test_unpunctuated_run_on_is_broken_up(self):
+        words = " ".join(f"w{i}" for i in range(70))
+        sents = live.refined_sentences([words])
+        self.assertTrue(all(len(x.split()) <= 30 for x in sents))
+        self.assertEqual(" ".join(sents), words)
+
+    def test_empty(self):
+        self.assertEqual(live.refined_sentences([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
