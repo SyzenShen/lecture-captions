@@ -109,7 +109,8 @@ calcium indicator line = 钙离子指示剂品系     # translate this term the 
 ```
 
 Terms are swapped for a placeholder before translation and back afterwards; the first time a term appears its English follows in brackets
-(多孔板（multi-well plates）), so even a wrong guess can be traced back. If the translator drops a placeholder, that sentence is translated without the glossary.
+(多孔板（multi-well plates）), so even a wrong guess can be traced back (`--brackets always`: every time; `term = 中文 !`: always for that term).
+A term that is hard to translate can be written `galvanometric mirror = -`: the sentence then shows just the English in brackets, （galvanometric mirror）. If the translator drops a placeholder, that sentence is translated without the glossary.
 See `glossary/example_biology.txt`; your own glossaries in `glossary/` are git-ignored. A larger offline model did not help: NLLB-200 (600M and 1.3B)
 dropped characters, stopped in the middle of long sentences and used 7-12x the CPU of the current translator.
 

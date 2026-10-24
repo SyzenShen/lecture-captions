@@ -1062,6 +1062,8 @@ def main():
     ap.add_argument("--draft-threads", type=int, default=None)
     ap.add_argument("--glossary", action="append", default=[], metavar="FILE",
                     help="course glossary (see glossary/example_biology.txt): right Chinese for technical terms, fixes for words Whisper keeps mishearing; can be given more than once")
+    ap.add_argument("--brackets", choices=["first", "always"], default="first",
+                    help="glossary terms: show the English in brackets after the Chinese only the first time (default) or every time")
     ap.add_argument("--profile", choices=list(PROFILES), default="balanced",
                     help="battery = original behaviour, least CPU; balanced = + grey draft text (default); plugged = + a strong model re-reads every ~15 s block and replaces it (needs power)")
     ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")
@@ -1101,7 +1103,7 @@ def main():
     model = WhisperModel(a.model, device="cpu", compute_type="int8", cpu_threads=a.threads)
     translate = make_translator(a.translator)
     if a.glossary:
-        GLOSSARY = Glossary.load([os.path.expanduser(p) for p in a.glossary])
+        GLOSSARY = Glossary.load([os.path.expanduser(p) for p in a.glossary], always=a.brackets == "always")
         print(f"Glossary: {len(GLOSSARY.terms)} terms, {len(GLOSSARY.fixes)} fixes", flush=True)
         translate = GlossaryTranslator(translate, GLOSSARY)
     out = Output(os.path.join(HERE, "transcripts", datetime.now().strftime("%Y-%m-%d_%H%M") + ".txt"))

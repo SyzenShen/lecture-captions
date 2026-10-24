@@ -11,6 +11,8 @@ calcium indicator line = 钙离子指示剂品系   # trailing comment
 galvanometric mirror system = 振镜系统
 mirror system = 镜子系统
 multi-well plate = 多孔板
+newbie tracker = -
+signal = 信号 !
 ~ multi-world plate = multi-well plate
 ~ lava = larvae
 """
@@ -37,8 +39,8 @@ class Protect(unittest.TestCase):
     def test_longest_term_wins_and_placeholders_are_in_order(self):
         text, tags = make().protect("A galvanometric mirror system and calcium indicator lines.")
         self.assertEqual(text, "A ZorvaxA and ZorvaxB.")
-        self.assertEqual(tags["ZorvaxA"], ("galvanometric mirror system", "振镜系统"))
-        self.assertEqual(tags["ZorvaxB"], ("calcium indicator lines", "钙离子指示剂品系"))
+        self.assertEqual(tags["ZorvaxA"], ("galvanometric mirror system", "振镜系统", False))
+        self.assertEqual(tags["ZorvaxB"], ("calcium indicator lines", "钙离子指示剂品系", False))
 
     def test_shorter_term_still_matches_elsewhere(self):
         text, tags = make().protect("a mirror system, a galvanometric mirror system")
@@ -57,6 +59,22 @@ class Restore(unittest.TestCase):
         self.assertEqual(first, "放入多孔板（multi-well plates）。")
         second = g.restore("再放入ZorvaxA。", tags)
         self.assertEqual(second, "再放入多孔板。")
+
+    def test_a_term_without_a_translation_is_shown_as_its_english_in_brackets(self):
+        g = make()
+        _, tags = g.protect("a newbie tracker here")
+        self.assertEqual(g.restore("这里有ZorvaxA。", tags), "这里有（newbie tracker）。")
+        self.assertEqual(g.restore("这里有ZorvaxA。", tags), "这里有（newbie tracker）。")     # every time
+
+    def test_bang_rule_and_the_always_option_bracket_every_time(self):
+        g = make()
+        _, tags = g.protect("the signal")
+        self.assertEqual(g.restore("ZorvaxA强。", tags), "信号（signal）强。")
+        self.assertEqual(g.restore("ZorvaxA强。", tags), "信号（signal）强。")
+        g2 = glossary.Glossary(RULES.splitlines(), always=True)
+        _, tags = g2.protect("multi-well plates")
+        g2.restore("ZorvaxA", tags)
+        self.assertEqual(g2.restore("ZorvaxA", tags), "多孔板（multi-well plates）")
 
     def test_a_lost_placeholder_is_reported(self):
         g = make()

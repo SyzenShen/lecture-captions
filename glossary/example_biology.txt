@@ -3,12 +3,16 @@
 #
 #   English term = 中文        the term is translated the way you write it; the first time it appears
 #                              the English follows in brackets: 多孔板（multi-well plate）
+#   English term = -           hard to translate: just the English in brackets: （galvanometric mirror）
+#   English term = 中文 !      always show the English in brackets after the Chinese (otherwise only the first time;
+#                              --brackets always does that for every term)
 #   ~ heard = right            Whisper keeps hearing "heard": the English itself is corrected
 #
 # Terms match case-insensitively; a space also matches a hyphen; a plural "s" is accepted.
 
 multi-well plate = 多孔板
 calcium indicator = 钙离子指示剂
+galvanometric mirror = -
 reporter line = 报告品系
 transcription factor = 转录因子
 transcription = 转录

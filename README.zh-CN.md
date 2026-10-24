@@ -83,7 +83,7 @@ calcium indicator line = 钙离子指示剂品系     # 这个术语按我写的
 ./run.sh --web --glossary glossary/my_course.txt     # 可以给多个
 ```
 
-翻译前先把术语换成占位符，翻译后再换回；术语第一次出现时后面会带上英文括号（多孔板（multi-well plates）），这样即使猜错了也能对回原文。如果翻译器丢掉了占位符，这一句就不用术语表重新翻译。示例见 `glossary/example_biology.txt`；你自己放在 `glossary/` 里的术语表不会被提交。更大的离线模型没有帮助：NLLB-200（600M 和 1.3B）会丢字、长句翻到一半就停，CPU 是现在翻译器的 7–12 倍。
+翻译前先把术语换成占位符，翻译后再换回；术语第一次出现时后面会带上英文括号（多孔板（multi-well plates）），这样即使猜错了也能对回原文（`--brackets always` 每次都带；`term = 中文 !` 让某个术语每次都带）。不好翻译的术语可以写成 `galvanometric mirror = -`，这样这句话里就只显示括号里的英文：（galvanometric mirror）。如果翻译器丢掉了占位符，这一句就不用术语表重新翻译。示例见 `glossary/example_biology.txt`；你自己放在 `glossary/` 里的术语表不会被提交。更大的离线模型没有帮助：NLLB-200（600M 和 1.3B）会丢字、长句翻到一半就停，CPU 是现在翻译器的 7–12 倍。
 
 ## 课后：生成准确的笔记
 
