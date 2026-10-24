@@ -83,7 +83,8 @@ def main():
     model = WhisperModel(a.model, device="cpu", compute_type="int8", cpu_threads=a.threads)
     t0 = time.time()
     segs, _ = model.transcribe(audio, language="en", beam_size=5, vad_filter=True, initial_prompt=prompt or None,
-                               condition_on_previous_text=False, temperature=0.0)
+                               condition_on_previous_text=False,
+                               temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0), compression_ratio_threshold=2.4)   # retry when the output loops
     segments, total = [], len(audio) / live.SR
     for s in segs:
         segments.append((s.start, s.end, s.text))
