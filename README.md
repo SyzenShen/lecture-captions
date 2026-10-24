@@ -46,6 +46,7 @@ Useful options (`./run.sh --help` for all):
 |---|---|
 | `--web` | open the local page (`http://127.0.0.1:8765`, localhost only) |
 | `--prompt-file FILE` / `--prompt "..."` | topic vocabulary, **English only**, keep it under ~500 characters |
+| `--profile battery\|balanced\|plugged` | power situation (see below); default `balanced` |
 | `--no-draft` | no grey draft text: about 40 % less CPU on battery, first words appear later |
 | `--chunk 8` | longest piece per recognition (default 6 s; 8 s uses less CPU, 5 s is quicker) |
 | `--translator none` | English only |
@@ -61,6 +62,34 @@ and R/shell function names you expect, comma separated (see `prompts/example_bio
 In our own tests it was the single biggest improvement: on one real lecture, a prompt that matched the topic got 10 of 15
 key terms right versus 6 with a prompt for a different course. It cuts both ways: a prompt for the wrong subject makes
 Whisper insert its words into the captions, so change it when the subject changes.
+
+## Power profiles
+
+| Profile | What runs | CPU (one core = 100 %) | What you get |
+|---|---|---|---|
+| `battery` | `small.en`, no draft | about 130 % | first words ~6 s after they are spoken; live accuracy as below |
+| `balanced` (default) | + `tiny.en` grey drafts | about 190 % | first words ~2 s |
+| `plugged` | + `large-v3-turbo` re-reads every ~15-27 s block (it ends at a pause) and replaces the sentences of that block | about 410 % | same ~2 s first words, and each block is replaced by the stronger version ~10 s after it ends, so the text you scroll back through is much better. Needs power and a fast multi-core CPU (tested on a 2019 Intel MacBook Pro, where it ran at a load of ~7) |
+
+```bash
+./run.sh --web --profile plugged --prompt-file prompts/my_course.txt
+```
+
+`--refine-model`, `--refine-threads` and `--block-seconds` set the pieces separately. If the refiner falls more than three
+blocks behind, the oldest block is left as it was. The first run downloads `large-v3-turbo` (~1.6 GB).
+
+Measured with the whole product running in real time on three ~6-7 minute stretches of two real lectures (accented, noisy
+lecture hall; distance in words to a Whisper large-v3 decode of the whole stretch, whose own noise floor against turbo is ~13 %):
+
+| Stretch | `balanced`, final text | `plugged`, final text |
+|---|---|---|
+| lecture 1, stretch A | 25.7 % | 17.8 % |
+| lecture 1, stretch C | 30.4 % | 21.6 % |
+| lecture 2 | 25.7 % | 18.0 % |
+
+The grey drafts are rough on purpose: they differ from the accurate text in about 40-47 % of the words, so read them as
+"what is being said right now", not as notes. A block refined with turbo needs a temperature fallback (the program does this);
+without it turbo looped on one lecture and was 35 % off instead of 19.5 %.
 
 ## After class: accurate notes
 
