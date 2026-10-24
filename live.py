@@ -329,6 +329,52 @@ def draft_loop(model, seg, display, every, stop):
             display.set_draft(key, text)
 
 
+class BlockGrouper:
+    """Groups consecutive chunks into blocks of at least `seconds` of speech, so a block ends at a pause.
+    seconds = 0 turns it off (every chunk is block 0 and never ends one)."""
+
+    def __init__(self, seconds=0.0):
+        self.seconds, self.block, self.start = seconds, 0, None
+
+    def tag(self, chunk):
+        """(audio, start, end, forced) -> (audio, start, end, forced, block, ends_block)."""
+        audio, start, end, forced = chunk
+        if not self.seconds:
+            return audio, start, end, forced, 0, False
+        if self.start is None:
+            self.start = start
+        block, ends = self.block, end - self.start >= self.seconds
+        if ends:
+            self.block, self.start = self.block + 1, None
+        return audio, start, end, forced, block, ends
+
+    def close(self):
+        """An explicit break (pause, end of the lecture): the next chunk starts a new block."""
+        if self.start is not None:
+            self.block, self.start = self.block + 1, None
+
+
+def start_translator(translate, out):
+    """Translation runs in its own thread so it never delays recognition. Put (sentence id, English) on the queue."""
+    tq = queue.Queue()
+
+    def loop():
+        while True:
+            item = tq.get()
+            if item is None:
+                return
+            sid, t = item
+            try:
+                zh = clean_zh(translate(t), t)
+            except Exception as e:  # keep captions flowing if translation fails
+                zh = f"(translation error: {e})"
+            out.set_zh(sid, zh)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return tq, thread
+
+
 # ---------------------------------------------------------------- worker
 SENTENCE_END = re.compile(r"[.?!][\"')\]]*$")
 HALLUCINATION = re.compile(r"[\W_]*(you|thank you\.?|thanks for watching\.?)?[\W_]*", re.I)
@@ -449,27 +495,9 @@ def split_sentences(text):
     return [x for x in re.split(r"(?<=[.?!])\s+", text.strip()) if x]
 
 
-def worker(q, model, translate, out, seg, display):
-    context, last = "", ""
+def worker(q, model, tq, out, seg, display):
+    context, last, cur_block = "", "", 0
     text, secs, end_t = "", 0.0, 0.0     # unfinished tail waiting for a continuation, and when its speech ended
-
-    # translation runs in its own thread so it never delays the next recognition
-    tq = queue.Queue()
-
-    def translator_loop():
-        while True:
-            item = tq.get()
-            if item is None:
-                return
-            sid, t = item
-            try:
-                zh = clean_zh(translate(t), t)
-            except Exception as e:  # keep captions flowing if translation fails
-                zh = f"(translation error: {e})"
-            out.set_zh(sid, zh)
-
-    tt = threading.Thread(target=translator_loop, daemon=True)
-    tt.start()
 
     def emit(t):
         nonlocal last
@@ -481,7 +509,7 @@ def worker(q, model, translate, out, seg, display):
         if not t or t == last or HALLUCINATION.fullmatch(t):
             return
         last = t
-        tq.put((out.emit(t), t))      # the English shows at once; the translator thread adds the Chinese when ready
+        tq.put((out.emit(t, block=cur_block), t))      # the English shows at once; the translator thread adds the Chinese when ready
 
     def finish():
         nonlocal text, secs
@@ -493,7 +521,7 @@ def worker(q, model, translate, out, seg, display):
         return GAP_UNFINISHED if looks_unfinished(text) else GAP_COMPLETE
 
     def run():
-        nonlocal context, text, secs, end_t
+        nonlocal context, text, secs, end_t, cur_block
         while True:
             try:
                 item = q.get(timeout=0.2 if text else None)
@@ -510,11 +538,12 @@ def worker(q, model, translate, out, seg, display):
                 finish()
                 display.clear()
                 continue
-            audio, start_t, e_t, forced = item
+            audio, start_t, e_t, forced, block, ends = item
             if os.environ.get('LIVE_DEBUG'):
                 print(f'[dbg] chunk {start_t:.1f}-{e_t:.1f}s gap={start_t - end_t:.2f}', file=sys.stderr)
             if text and start_t - end_t > gap_limit():
                 finish()
+            cur_block = block
             t0 = time.time()
             new = transcribe(model, audio, context)
             if os.environ.get('LIVE_DEBUG'):
@@ -522,6 +551,8 @@ def worker(q, model, translate, out, seg, display):
                       f'for {len(audio) / SR:.1f}s audio, forced={forced}', file=sys.stderr)
             display.refined(round(start_t, 2))     # the accurate result replaces this segment's quick draft
             if len(new) < 2 or HALLUCINATION.fullmatch(new):
+                if ends:
+                    finish()
                 continue
             context += " " + new          # raw Whisper output keeps its casing/punctuation (good prompt style)
             text, secs, end_t = join(text, new), secs + len(audio) / SR, e_t
@@ -532,20 +563,14 @@ def worker(q, model, translate, out, seg, display):
                     emit(sent)
                 text = parts[-1]
                 secs = 0.0
-            if secs > MAX_PENDING:
-                finish()
-                continue
-            # a substantial sentence that ended on a real pause is done: don't wait for a possible continuation
-            if not forced and not looks_unfinished(text) and len(text.split()) >= 8:
+            # a block end is a sentence end (the refined version of the block replaces whole sentences); a substantial
+            # sentence that ended on a real pause is done too: don't wait for a possible continuation
+            if secs > MAX_PENDING or ends or (not forced and not looks_unfinished(text) and len(text.split()) >= 8):
                 finish()
                 continue
             display.set_pending(text)
 
-    try:
-        run()
-    finally:
-        tq.put(None)
-        tt.join(timeout=30)
+    run()
 
 
 # ---------------------------------------------------------------- segmentation
@@ -888,6 +913,7 @@ def main():
     ap.add_argument("--no-draft", action="store_true", help="no draft text: about 40%% less CPU, first words appear later")
     ap.add_argument("--draft-every", type=float, default=1.0, help="seconds between drafts")
     ap.add_argument("--draft-threads", type=int, default=2)
+    ap.add_argument("--block-seconds", type=float, default=0.0, help="group speech into blocks of at least this many seconds, ending at a pause (needed by --refine-model; 0 = off)")
     ap.add_argument("--beam", type=int, default=5, help="beam size (1 = fastest, 5 = more accurate)")
     ap.add_argument("--no-record", action="store_true", help="do not save the session audio (.wav)")
     ap.add_argument("--web", action="store_true", help="open a local page with big captions and one-click buttons")
@@ -935,7 +961,13 @@ def main():
         print(f"Loading draft model {a.draft_model} ...", flush=True)
         draft_model = WhisperModel(a.draft_model, device="cpu", compute_type="int8", cpu_threads=a.draft_threads)
         threading.Thread(target=draft_loop, args=(draft_model, seg, display, a.draft_every, stop_drafts), daemon=True).start()
-    t = threading.Thread(target=worker, args=(q, model, translate, out, seg, display), daemon=True)
+    tq, tt = start_translator(translate, out)
+    grouper = BlockGrouper(a.block_seconds)
+
+    def put_chunk(c):
+        q.put(grouper.tag(c))
+
+    t = threading.Thread(target=worker, args=(q, model, tq, out, seg, display), daemon=True)
     t.start()
 
     if a.file:
@@ -949,12 +981,14 @@ def main():
                     time.sleep(wait)
             chunk = seg.feed(audio[i:i + BLOCK])
             if chunk is not None:
-                q.put(chunk)
+                put_chunk(chunk)
         while (tail := seg.flush()) is not None:
-            q.put(tail)
+            put_chunk(tail)
         q.put(None)
         t.join()
         stop_drafts.set()
+        tq.put(None)
+        tt.join(timeout=30)
         out.save_md()
         print(f"\nSaved: {out.md_path}")
         return
@@ -973,7 +1007,7 @@ def main():
         for i in range(0, len(x) - BLOCK + 1, BLOCK):     # the buffer is 4 blocks; analyse in 32 ms steps
             chunk = seg.feed(x[i:i + BLOCK].copy())
             if chunk is not None:
-                q.put(chunk)
+                put_chunk(chunk)
 
     dev = a.device if a.device is not None else sd.default.device[0]
     print(f"Listening on: {sd.query_devices(dev)['name']}   (Ctrl+C to stop)\n"
@@ -1000,7 +1034,8 @@ def main():
             if not out.paused:
                 stop_capture()
                 while (tail := seg.flush()) is not None:      # what was said just before pausing still gets translated
-                    q.put(tail)
+                    put_chunk(tail)
+                grouper.close()
                 q.put("flush")
                 out.paused = True
                 out._clear_partial()
@@ -1023,10 +1058,12 @@ def main():
         with cap_lock:
             stop_capture()
         while (tail := seg.flush()) is not None:
-            q.put(tail)
+            put_chunk(tail)
         q.put(None)
         t.join(timeout=30)
         stop_drafts.set()
+        tq.put(None)
+        tt.join(timeout=30)
         restore()
         if wav is not None:
             wav.close()
