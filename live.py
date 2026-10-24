@@ -9,9 +9,15 @@
   ./run.sh --translator none    English only
   ./run.sh --file lecture.mp3   transcribe a recording instead of the mic
 """
+import os
+
+# CTranslate2's OpenMP threads busy-wait after every call by default, which is 10-25 % of the CPU with many short calls.
+# This must be set before faster_whisper is imported.
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+os.environ.setdefault("KMP_BLOCKTIME", "0")
+
 import argparse
 import collections
-import os
 import queue
 import re
 import shutil
@@ -281,6 +287,7 @@ class Display:
         self.out = out
         self.pending = ""
         self.drafts = {}
+        self.upto = -1.0             # segments starting at or before this already have their accurate text
         self.lock = threading.Lock()
 
     def _show(self):
@@ -297,12 +304,19 @@ class Display:
 
     def set_draft(self, key, text):
         with self.lock:
+            if key <= self.upto:          # the accurate text arrived while this draft was being made: it would never go away
+                return
             self.drafts[key] = text
             self._show()
+
+    def has_draft(self, key):
+        with self.lock:
+            return key in self.drafts or key <= self.upto
 
     def refined(self, upto):
         """The accurate recogniser has finished the segment starting at `upto`: it and any earlier draft are obsolete."""
         with self.lock:
+            self.upto = max(self.upto, upto)
             for k in [k for k in self.drafts if k <= upto]:
                 del self.drafts[k]
             self._show()                  # repaint now: a segment with no usable result must not leave its draft behind
@@ -313,10 +327,18 @@ class Display:
             self._show()
 
 
-def draft_loop(model, seg, display, every, stop):
-    """Quick tentative text for the segment being spoken right now, refreshed every `every` seconds."""
-    last_key, last_len = None, 0
-    while not stop.wait(every):
+def draft_loop(model, seg, display, every, stop, late=None):
+    """Quick tentative text for the segment being spoken right now. The first draft comes as soon as a second of speech
+    has been heard (that is what the reader waits for); after that it is refreshed at most every `every` seconds."""
+    last_key, last_len, last_time = None, 0, 0.0
+    while not stop.wait(0.25):
+        while late is not None and not late.empty():      # a piece that ended before it ever got a draft (too short, or the loop was busy)
+            audio, start = late.get_nowait()
+            key = round(start, 2)
+            if not display.has_draft(key):
+                text = transcribe(model, audio, "", beam=1, vad=False)
+                if len(text) >= 2 and not HALLUCINATION.fullmatch(text):
+                    display.set_draft(key, text)
         snap = seg.snapshot()
         if snap is None:
             continue
@@ -324,10 +346,11 @@ def draft_loop(model, seg, display, every, stop):
         if len(audio) < SR:                       # less than a second of speech: nothing worth showing yet
             continue
         key = round(start, 2)
-        if key == last_key and len(audio) - last_len < SR // 2:
-            continue                              # barely any new audio since the last draft
-        text = transcribe(model, audio, "", beam=1)
-        last_key, last_len = key, len(audio)
+        now = time.monotonic()
+        if key == last_key and (now - last_time < every or len(audio) - last_len < SR // 2):
+            continue                              # too soon, or barely any new audio since the last draft
+        text = transcribe(model, audio, "", beam=1, vad=False)       # the segmenter already cut this at pauses
+        last_key, last_len, last_time = key, len(audio), time.monotonic()
         if len(text) >= 2 and not HALLUCINATION.fullmatch(text):
             display.set_draft(key, text)
 
@@ -365,7 +388,7 @@ class BlockAudio:
         self.rq, self.parts, self.block = rq, [], None
 
     def add(self, tagged):
-        audio, _, _, _, block, ends = tagged
+        audio, block, ends = tagged[0], tagged[4], tagged[5]
         self.parts.append(audio)
         self.block = block
         if ends:
@@ -401,7 +424,7 @@ def refiner(rq, model, q):
                 print(f"[dbg] refiner behind, skipped block {skipped[0]}", file=sys.stderr)
         block, audio = item
         t0 = time.time()
-        pieces = transcribe(model, audio, "", careful=True, as_segments=True)
+        pieces = transcribe(model, audio, "", beam=5, careful=True, as_segments=True)
         if os.environ.get("LIVE_DEBUG"):
             print(f"[dbg] refined block {block}: {len(audio) / SR:.1f}s audio in {time.time() - t0:.1f}s", file=sys.stderr)
         sentences = refined_sentences(pieces)
@@ -435,6 +458,7 @@ SENTENCE_END = re.compile(r"[.?!][\"')\]]*$")
 HALLUCINATION = re.compile(r"[\W_]*(you|thank you\.?|thanks for watching\.?)?[\W_]*", re.I)
 GAP_COMPLETE = 0.8     # merge a following chunk only if silence in between is shorter than this ...
 GAP_UNFINISHED = 3.0   # ... or this, when the text so far is obviously unfinished ("... how", "... and the")
+MERGE_WAIT = 1.5       # seconds of silence after which chunks waiting to be merged are decoded anyway
 MAX_PENDING = 25.0     # seconds of speech before we force a sentence out
 DANGLING = {"a", "an", "the", "and", "or", "but", "so", "of", "to", "in", "on", "at", "for", "with", "by",
             "from", "that", "which", "who", "how", "what", "why", "when", "where", "if", "because", "as",
@@ -499,13 +523,13 @@ def clean_prompt(p):
     return ascii_p
 
 
-def transcribe(model, audio, context, beam=None, careful=False, as_segments=False):
+def transcribe(model, audio, context, beam=None, careful=False, as_segments=False, vad=True):
     """careful=True is for long audio decoded once (the block refiner): retry at a higher temperature when the output
     looks like a repetition loop. The live path leaves it off because a retry can make one chunk take 5x longer."""
     prompt = PROMPT.strip() or None
     retry = dict(temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0), compression_ratio_threshold=2.4) if careful else dict(temperature=0.0)
     segs, _ = model.transcribe(
-        normalise(audio), language="en", beam_size=beam or BEAM, vad_filter=True,
+        normalise(audio), language="en", beam_size=beam or BEAM, vad_filter=vad,
         condition_on_previous_text=False, initial_prompt=prompt, no_speech_threshold=0.6,
         max_new_tokens=int(len(audio) / SR * 7) + 20,   # a repetition loop would otherwise run to 448 tokens (~10 s)
         **retry,
@@ -602,61 +626,82 @@ def worker(q, model, tq, out, seg, display):
     def gap_limit():
         return GAP_UNFINISHED if looks_unfinished(text) else GAP_COMPLETE
 
-    def run():
+    waiting = []          # chunks collected for one decode: (audio, start, end, forced, block, ends, decode_now)
+
+    def decode_waiting():
+        """Decode the collected chunks as one piece: fewer, longer decodes cost about half the CPU of one decode per
+        chunk (the encoder always processes >= 15 s of padded audio) and read better with more context."""
         nonlocal context, text, secs, end_t, cur_block
+        if not waiting:
+            return
+        items, waiting[:] = list(waiting), []
+        audio = np.concatenate([i[0] for i in items]) if len(items) > 1 else items[0][0]
+        start_t, e_t, forced, block = items[0][1], items[-1][2], items[-1][3], items[0][4]
+        ends = any(i[5] for i in items)
+        if os.environ.get('LIVE_DEBUG'):
+            print(f'[dbg] decode {len(items)} chunk(s) {start_t:.1f}-{e_t:.1f}s gap={start_t - end_t:.2f}', file=sys.stderr)
+        if text and start_t - end_t > gap_limit():
+            finish()
+        cur_block = block
+        t0 = time.time()
+        new = transcribe(model, audio, context)
+        if os.environ.get('LIVE_DEBUG'):
+            print(f'[dbg]   waited {seg.t - e_t - 0:.1f}s after speech end, transcribe {time.time() - t0:.1f}s '
+                  f'for {len(audio) / SR:.1f}s audio, forced={forced}', file=sys.stderr)
+        display.refined(round(items[-1][1], 2))     # the accurate result replaces the quick drafts of all its chunks
+        if len(new) < 2 or HALLUCINATION.fullmatch(new):
+            if ends:
+                finish()
+            return
+        context += " " + new          # raw Whisper output keeps its casing/punctuation (good prompt style)
+        text, secs, end_t = join(text, new), secs + len(audio) / SR, e_t
+        # every finished sentence goes out right away; only the last, possibly unfinished one waits
+        parts = split_sentences(text)
+        if len(parts) > 1:
+            for sent in parts[:-1]:
+                emit(sent)
+            text = parts[-1]
+            secs = 0.0
+        # a block end is a sentence end (the refined version of the block replaces whole sentences); a substantial
+        # sentence that ended on a real pause is done too: don't wait for a possible continuation
+        if secs > MAX_PENDING or ends or (not forced and not looks_unfinished(text) and len(text.split()) >= 8):
+            finish()
+            return
+        display.set_pending(text)
+
+    def run():
         while True:
             try:
-                item = q.get(timeout=0.2 if text else None)
+                item = q.get(timeout=0.2 if (text or waiting) else None)
             except queue.Empty:
                 # nothing new yet: give up waiting once the silence (or the next utterance's start) is too far off
                 started = seg.speech_start if seg.speaking else None
-                if (started if started is not None else seg.t) - end_t > gap_limit():
+                now = started if started is not None else seg.t
+                if waiting and now - waiting[-1][2] > MERGE_WAIT:
+                    decode_waiting()
+                if text and now - end_t > gap_limit():
                     finish()
                 continue
             if item is None:
+                decode_waiting()
                 finish()
                 return
             if isinstance(item, Refined):
+                if waiting and waiting[0][4] == item.block:
+                    decode_waiting()
                 if text and cur_block == item.block:    # the lecture ended inside this block: its last sentence is not out yet
                     finish()
                 for sid, en in out.replace_block(item.block, item.sentences, min_ratio=0.6):
                     tq.put((sid, en))
                 continue
             if isinstance(item, str) and item == "flush":
+                decode_waiting()
                 finish()
                 display.clear()
                 continue
-            audio, start_t, e_t, forced, block, ends = item
-            if os.environ.get('LIVE_DEBUG'):
-                print(f'[dbg] chunk {start_t:.1f}-{e_t:.1f}s gap={start_t - end_t:.2f}', file=sys.stderr)
-            if text and start_t - end_t > gap_limit():
-                finish()
-            cur_block = block
-            t0 = time.time()
-            new = transcribe(model, audio, context)
-            if os.environ.get('LIVE_DEBUG'):
-                print(f'[dbg]   waited {seg.t - e_t - 0:.1f}s after speech end, transcribe {time.time() - t0:.1f}s '
-                      f'for {len(audio) / SR:.1f}s audio, forced={forced}', file=sys.stderr)
-            display.refined(round(start_t, 2))     # the accurate result replaces this segment's quick draft
-            if len(new) < 2 or HALLUCINATION.fullmatch(new):
-                if ends:
-                    finish()
-                continue
-            context += " " + new          # raw Whisper output keeps its casing/punctuation (good prompt style)
-            text, secs, end_t = join(text, new), secs + len(audio) / SR, e_t
-            # every finished sentence goes out right away; only the last, possibly unfinished one waits
-            parts = split_sentences(text)
-            if len(parts) > 1:
-                for sent in parts[:-1]:
-                    emit(sent)
-                text = parts[-1]
-                secs = 0.0
-            # a block end is a sentence end (the refined version of the block replaces whole sentences); a substantial
-            # sentence that ended on a real pause is done too: don't wait for a possible continuation
-            if secs > MAX_PENDING or ends or (not forced and not looks_unfinished(text) and len(text.split()) >= 8):
-                finish()
-                continue
-            display.set_pending(text)
+            waiting.append(item)
+            if item[6]:
+                decode_waiting()
 
     run()
 
@@ -985,9 +1030,10 @@ def start_key_listener(out):
 # ---------------------------------------------------------------- main
 # defaults per power situation (explicit flags always win)
 PROFILES = {
-    "battery": {"no_draft": True},
-    "balanced": {},
-    "plugged": {"refine_model": "large-v3-turbo", "block_seconds": 15.0},
+    "battery": {"no_draft": True, "merge_seconds": 6.0, "threads": 1, "beam": 3, "draft_every": 1.5, "draft_threads": 1},
+    "balanced": {"merge_seconds": 10.0, "threads": 1, "beam": 3, "draft_every": 1.5, "draft_threads": 1},
+    "plugged": {"merge_seconds": 10.0, "threads": 2, "beam": 3, "draft_every": 1.0, "draft_threads": 2,
+                "refine_model": "large-v3-turbo", "block_seconds": 15.0},
 }
 
 
@@ -999,7 +1045,7 @@ def main():
     ap.add_argument("--file", help="transcribe an audio file instead of the mic")
     ap.add_argument("--realtime", action="store_true", help="with --file: play at real speed (for testing)")
     ap.add_argument("--prompt", default="", help='topic/vocabulary hint, e.g. "Immunology lecture: antibody, T cell, MHC"')
-    ap.add_argument("--threads", type=int, default=2, help="CPU threads for Whisper (2 = best energy/latency balance)")
+    ap.add_argument("--threads", type=int, default=None, help="CPU threads for Whisper (profile default: 1 on battery/balanced, 2 plugged; 1 thread uses less total CPU)")
     ap.add_argument("--full-context", action="store_true", help="disable the shortened encoder context (more CPU, same accuracy)")
     ap.add_argument("--prompt-file", help="read the topic/vocabulary prompt from a text file (see prompts/)")
     ap.add_argument("--chunk", type=float, default=6.0, help="longest audio piece per recognition, seconds (6: first words appear sooner than with 8, ~20%% more CPU)")
@@ -1007,14 +1053,15 @@ def main():
     ap.add_argument("--vad", choices=["silero", "energy"], default="silero", help="how to find pauses: silero = speech-detection model (default, robust to quiet/noisy rooms); energy = old loudness threshold")
     ap.add_argument("--draft-model", default="tiny.en", help="small fast model for tentative grey text while the lecturer is still speaking (default tiny.en: first words appear ~2 s after they are spoken instead of ~6 s)")
     ap.add_argument("--no-draft", action="store_true", help="no draft text: about 40%% less CPU, first words appear later")
-    ap.add_argument("--draft-every", type=float, default=1.0, help="seconds between drafts")
-    ap.add_argument("--draft-threads", type=int, default=2)
+    ap.add_argument("--draft-every", type=float, default=None, help="minimum seconds between drafts of the same segment (the first comes after 1 s of speech)")
+    ap.add_argument("--draft-threads", type=int, default=None)
     ap.add_argument("--profile", choices=list(PROFILES), default="balanced",
                     help="battery = original behaviour, least CPU; balanced = + grey draft text (default); plugged = + a strong model re-reads every ~15 s block and replaces it (needs power)")
     ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")
     ap.add_argument("--refine-threads", type=int, default=4)
+    ap.add_argument("--merge-seconds", type=float, default=0.0, help="decode several consecutive pieces of speech as one, ending at a pause after this many seconds: about half the CPU and more accurate, but the accurate text comes later (0 = one decode per piece)")
     ap.add_argument("--block-seconds", type=float, default=0.0, help="length of a block for --refine-model (it ends at the first pause after this many seconds)")
-    ap.add_argument("--beam", type=int, default=5, help="beam size (1 = fastest, 5 = more accurate)")
+    ap.add_argument("--beam", type=int, default=None, help="beam size of the accurate pass (profile default 3: no measurable loss on 8-15 s blocks, ~25 %% less CPU than 5)")
     ap.add_argument("--no-record", action="store_true", help="do not save the session audio (.wav)")
     ap.add_argument("--web", action="store_true", help="open a local page with big captions and one-click buttons")
     ap.add_argument("--port", type=int, default=8765)
@@ -1062,12 +1109,14 @@ def main():
         seg = Segmenter(max_len=a.chunk)
     display = Display(out)
     stop_drafts = threading.Event()
+    late_drafts = None
     if a.draft_model and not a.no_draft:
         print(f"Loading draft model {a.draft_model} ...", flush=True)
         draft_model = WhisperModel(a.draft_model, device="cpu", compute_type="int8", cpu_threads=a.draft_threads)
-        threading.Thread(target=draft_loop, args=(draft_model, seg, display, a.draft_every, stop_drafts), daemon=True).start()
+        late_drafts = queue.Queue()
+        threading.Thread(target=draft_loop, args=(draft_model, seg, display, a.draft_every, stop_drafts, late_drafts), daemon=True).start()
     tq, tt = start_translator(translate, out)
-    grouper = BlockGrouper(a.block_seconds)
+    grouper, merger = BlockGrouper(a.block_seconds), BlockGrouper(a.merge_seconds)
     rq, blocks, refine_thread = queue.Queue(), None, None
     if a.refine_model:
         print(f"Loading refine model {a.refine_model} ...", flush=True)
@@ -1080,13 +1129,17 @@ def main():
             grouper = BlockGrouper(0)
 
     def put_chunk(c):
+        if late_drafts is not None:
+            late_drafts.put((c[0], c[1]))
         tagged = grouper.tag(c)
-        q.put(tagged)
+        merged_end = merger.tag(c)[5] if a.merge_seconds else True
+        q.put(tagged + (merged_end or tagged[5],))        # the worker decodes when a merge group or a refine block ends
         if blocks is not None:
             blocks.add(tagged)
 
     def end_block():
         grouper.close()
+        merger.close()
         if blocks is not None:
             blocks.close()
 

@@ -30,6 +30,22 @@ class DisplayTest(unittest.TestCase):
         self.d.set_draft(10.0, "first draft")
         self.assertEqual(self.out.shown[-1], "Accurate part. first draft second draft")
 
+    def test_a_draft_that_arrives_after_its_accurate_text_is_dropped(self):
+        self.d.refined(5.0)
+        self.d.set_draft(5.0, "too late")
+        self.d.set_draft(4.0, "also too late")
+        self.assertEqual(self.d.drafts, {})
+        self.d.set_draft(6.0, "next segment")
+        self.assertEqual(self.d.drafts, {6.0: "next segment"})
+
+    def test_has_draft_counts_segments_already_replaced(self):
+        self.assertFalse(self.d.has_draft(3.0))
+        self.d.set_draft(3.0, "hello")
+        self.assertTrue(self.d.has_draft(3.0))
+        self.d.refined(3.0)
+        self.assertTrue(self.d.has_draft(3.0))          # replaced by accurate text: it needs no draft any more
+        self.assertFalse(self.d.has_draft(4.0))
+
     def test_a_draft_is_updated_in_place(self):
         self.d.set_draft(5.0, "so today")
         self.d.set_draft(5.0, "so today we talk about")
