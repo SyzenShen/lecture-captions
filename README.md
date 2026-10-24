@@ -46,7 +46,8 @@ Useful options (`./run.sh --help` for all):
 |---|---|
 | `--web` | open the local page (`http://127.0.0.1:8765`, localhost only) |
 | `--prompt-file FILE` / `--prompt "..."` | topic vocabulary, **English only**, keep it under ~500 characters |
-| `--chunk 5` | lower latency (default 8 s: about 29 % less CPU, same accuracy in our tests) |
+| `--no-draft` | no grey draft text: about 40 % less CPU on battery, first words appear later |
+| `--chunk 8` | longest piece per recognition (default 6 s; 8 s uses less CPU, 5 s is quicker) |
 | `--translator none` | English only |
 | `--device N`, `--list-devices` | pick the input device |
 | `--vad energy` | the old loudness-based pause detection |
@@ -61,6 +62,19 @@ In our own tests it was the single biggest improvement: on one real lecture, a p
 key terms right versus 6 with a prompt for a different course. It cuts both ways: a prompt for the wrong subject makes
 Whisper insert its words into the captions, so change it when the subject changes.
 
+## After class: accurate notes
+
+```bash
+./refine.py transcripts/2026-10-23_1051.wav --prompt-file prompts/my_course.txt
+```
+
+Decodes the whole saved recording at once with a stronger model (default `large-v3-turbo`, ~1.6 GB download) and writes
+`<name>.refined.md` with times, Chinese and the list of questions. On a real 7-minute stretch of lecture the English was
+13.4 % from a Whisper large-v3 reference (the same as whole-file turbo, at the noise floor of that comparison: turbo and
+large-v3 differ by 12.9 % from each other), versus 25.7 % for the live output. It takes about 0.8x the length of the audio
+on the test machine, so run it while the laptop is charging. Bigger models matter less than you would think on poor audio:
+on the same recording `medium.en` was no better than `small.en`.
+
 ## Honest limitations
 
 - **English lectures only** (`small.en`). The model is small because it has to run in real time on a laptop CPU.
@@ -69,7 +83,10 @@ Whisper insert its words into the captions, so change it when the subject change
   is harder, and technical terms are where it fails most.
 - The offline Chinese translation is basic and sometimes literal ("transcription" -> 抄写). It never sees the lecture
   context. `--translator claude` (needs `pip install anthropic` and `ANTHROPIC_API_KEY`) is better but **sends the English text to an API**.
-- Captions lag the speaker by a few seconds.
+- Delay, measured on a real 7-minute stretch of lecture (a fast, accented lecturer, 2019 Intel MacBook Pro): the first words of a
+  segment appear in grey a median **2.0 s** after they were spoken (p90 3.9 s) and are replaced by the accurate text after about 6 s.
+  Without the draft it was 6.1 s, and 9.9 s with the first version. The draft costs CPU (about 190 % of a core instead of 130 %).
+- The live text is less accurate than it could be: it listens in short pieces to stay quick. Use `refine.py` after class.
 - Program messages (terminal and web page buttons) are in Chinese; translations welcome.
 
 ## Privacy and recording
