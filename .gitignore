@@ -7,12 +7,16 @@
 !LICENSE
 !live.py
 !questions.py
+!glossary.py
 !refine.py
 !run.sh
 !setup.sh
 !fetch_argos_zh.py
 !requirements.txt
 !config.example.sh
+!glossary/
+glossary/*
+!glossary/example_*.txt
 !prompts/
 prompts/*
 !prompts/example_*.txt

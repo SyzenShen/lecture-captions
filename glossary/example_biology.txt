@@ -1,0 +1,21 @@
+# Example glossary. Copy it to glossary/my_course.txt (git-ignored) and edit.
+# Use:  ./run.sh --web --glossary glossary/my_course.txt
+#
+#   English term = 中文        the term is translated the way you write it; the first time it appears
+#                              the English follows in brackets: 多孔板（multi-well plate）
+#   ~ heard = right            Whisper keeps hearing "heard": the English itself is corrected
+#
+# Terms match case-insensitively; a space also matches a hyphen; a plural "s" is accepted.
+
+multi-well plate = 多孔板
+calcium indicator = 钙离子指示剂
+reporter line = 报告品系
+transcription factor = 转录因子
+transcription = 转录
+translation = 翻译
+polymerase chain reaction = 聚合酶链式反应
+knockout = 敲除
+knockdown = 敲低
+
+~ multi-world plate = multi-well plate
+~ lava = larvae

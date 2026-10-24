@@ -28,11 +28,13 @@ from datetime import datetime
 
 import numpy as np
 
+from glossary import Glossary, GlossaryTranslator
 from questions import extract_question
 
 SR = 16000
 BLOCK = 512                       # 32 ms
 HERE = os.path.dirname(os.path.abspath(__file__))
+GLOSSARY = None       # set from --glossary: fixes known recognition mistakes in the English
 MD_DIR = os.environ.get("CAPTIONS_NOTES_DIR") or os.path.join(HERE, "notes")   # where the Markdown notes (press s) are saved
 ARGOS_DIR = os.path.expanduser(os.environ.get("ARGOS_ZH_DIR") or "~/.local/share/argos-translate/packages/translate-en_zh-1_9")
 
@@ -612,6 +614,8 @@ def worker(q, model, tq, out, seg, display):
             t = t[:-3].rstrip() + "."
         elif t and t[-1] not in ".?!":
             t += "."
+        if GLOSSARY:
+            t = GLOSSARY.fix_english(t)
         if not t or t == last or HALLUCINATION.fullmatch(t):
             return
         last = t
@@ -691,7 +695,8 @@ def worker(q, model, tq, out, seg, display):
                     decode_waiting()
                 if text and cur_block == item.block:    # the lecture ended inside this block: its last sentence is not out yet
                     finish()
-                for sid, en in out.replace_block(item.block, item.sentences, min_ratio=0.6):
+                sentences = [GLOSSARY.fix_english(x) for x in item.sentences] if GLOSSARY else item.sentences
+                for sid, en in out.replace_block(item.block, sentences, min_ratio=0.6):
                     tq.put((sid, en))
                 continue
             if isinstance(item, str) and item == "flush":
@@ -1055,6 +1060,8 @@ def main():
     ap.add_argument("--no-draft", action="store_true", help="no draft text: about 40%% less CPU, first words appear later")
     ap.add_argument("--draft-every", type=float, default=None, help="minimum seconds between drafts of the same segment (the first comes after 1 s of speech)")
     ap.add_argument("--draft-threads", type=int, default=None)
+    ap.add_argument("--glossary", action="append", default=[], metavar="FILE",
+                    help="course glossary (see glossary/example_biology.txt): right Chinese for technical terms, fixes for words Whisper keeps mishearing; can be given more than once")
     ap.add_argument("--profile", choices=list(PROFILES), default="balanced",
                     help="battery = original behaviour, least CPU; balanced = + grey draft text (default); plugged = + a strong model re-reads every ~15 s block and replaces it (needs power)")
     ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")
@@ -1079,7 +1086,7 @@ def main():
         print(sd.query_devices())
         return
 
-    global PROMPT, BEAM, MD_DIR
+    global PROMPT, BEAM, MD_DIR, GLOSSARY
     if a.md_dir:
         MD_DIR = os.path.expanduser(a.md_dir)
     if a.prompt_file:
@@ -1093,6 +1100,10 @@ def main():
         shorten_encoder_context()
     model = WhisperModel(a.model, device="cpu", compute_type="int8", cpu_threads=a.threads)
     translate = make_translator(a.translator)
+    if a.glossary:
+        GLOSSARY = Glossary.load([os.path.expanduser(p) for p in a.glossary])
+        print(f"Glossary: {len(GLOSSARY.terms)} terms, {len(GLOSSARY.fixes)} fixes", flush=True)
+        translate = GlossaryTranslator(translate, GLOSSARY)
     out = Output(os.path.join(HERE, "transcripts", datetime.now().strftime("%Y-%m-%d_%H%M") + ".txt"))
     out.topic = a.prompt
     if a.web:
