@@ -685,7 +685,7 @@ button:hover{border-color:var(--acc)}button.on{background:var(--acc);border-colo
 main{padding:12px 16px 90px;max-width:1100px;margin:0 auto;font-size:var(--fs,26px);line-height:1.45}
 .e{margin:0 0 .9em}.ts{color:var(--dim);font-size:.5em;margin-right:.6em;font-variant-numeric:tabular-nums}
 .zh{font-weight:700;margin-top:.15em}.zh.wait{color:var(--dim);font-weight:400}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
-#partial{color:var(--dim)}
+#partial{color:var(--fg);opacity:.62}   /* the draft: readable, but visibly not final */
 .e.q{border-left:4px solid var(--acc);padding-left:.55em}
 /* focus mode: only the last three sentences, bigger; the Chinese opens per sentence on click */
 body.focus .e:not(.vis){display:none}body.focus main{font-size:calc(var(--fs)*1.45)}body.focus .e{cursor:pointer}
@@ -834,7 +834,8 @@ def main():
     ap.add_argument("--chunk", type=float, default=6.0, help="longest audio piece per recognition, seconds (6: first words appear sooner than with 8, ~20%% more CPU)")
     ap.add_argument("--md-dir", default=None, help="where the Markdown notes (press s) are saved")
     ap.add_argument("--vad", choices=["silero", "energy"], default="silero", help="how to find pauses: silero = speech-detection model (default, robust to quiet/noisy rooms); energy = old loudness threshold")
-    ap.add_argument("--draft-model", default="", help="small fast model for tentative grey text while the lecturer is still speaking, e.g. base.en (default: off)")
+    ap.add_argument("--draft-model", default="tiny.en", help="small fast model for tentative grey text while the lecturer is still speaking (default tiny.en: first words appear ~2 s after they are spoken instead of ~6 s)")
+    ap.add_argument("--no-draft", action="store_true", help="no draft text: about 40%% less CPU, first words appear later")
     ap.add_argument("--draft-every", type=float, default=1.0, help="seconds between drafts")
     ap.add_argument("--draft-threads", type=int, default=2)
     ap.add_argument("--beam", type=int, default=5, help="beam size (1 = fastest, 5 = more accurate)")
@@ -880,7 +881,7 @@ def main():
         seg = Segmenter(max_len=a.chunk)
     display = Display(out)
     stop_drafts = threading.Event()
-    if a.draft_model:
+    if a.draft_model and not a.no_draft:
         print(f"Loading draft model {a.draft_model} ...", flush=True)
         draft_model = WhisperModel(a.draft_model, device="cpu", compute_type="int8", cpu_threads=a.draft_threads)
         threading.Thread(target=draft_loop, args=(draft_model, seg, display, a.draft_every, stop_drafts), daemon=True).start()
