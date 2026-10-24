@@ -117,6 +117,19 @@ def make_translator(name):
 
 
 # ---------------------------------------------------------------- output
+def spread_times(first, last, n):
+    """n clock times ("HH:MM:SS") spread evenly from `first` to `last` (a block's refined sentences take the old span)."""
+    def secs(t):
+        h, m, sec = map(int, t.split(":"))
+        return h * 3600 + m * 60 + sec
+    a, b = secs(first), max(secs(first), secs(last))
+    out = []
+    for i in range(n):
+        x = a + (b - a) * i // max(1, n - 1) if n > 1 else a
+        out.append(f"{x // 3600 % 24:02d}:{x // 60 % 60:02d}:{x % 60:02d}")
+    return out
+
+
 def render_markdown(entries, started, topic="", saved_at=None):
     """Lecture notes as Markdown. `entries` are dicts with ts, en, zh ("" if not translated) and q (a question or "")."""
     lines = [f"# 课堂记录 {started:%Y-%m-%d %H:%M}", ""]
@@ -142,7 +155,9 @@ class Output:
         self.md_path = os.path.join(MD_DIR, os.path.basename(path).replace(".txt", ".md"))
         self.topic = ""
         self.started = datetime.now()
-        self.entries = []          # dicts: id (= index), ts, en, zh ("" until translated), q (question sentence or "")
+        self.entries = []          # dicts in display order: id (unique), ts, en, zh ("" until translated), q (question or ""), block
+        self.by_id = {}
+        self.next_id = 0
         self.printed_id = None     # the sentence whose English was printed last (its Chinese belongs right under it)
         self.lock = threading.Lock()
         self.subs = []             # web clients (queues) receiving live events
@@ -169,15 +184,18 @@ class Output:
         sys.stdout.flush()
         self.partial_shown = True
 
-    def emit(self, en, zh=""):
+    def emit(self, en, zh="", block=None):
         """Show an English sentence right away; its translation is attached later with set_zh()."""
         self._clear_partial()
         ts = datetime.now().strftime("%H:%M:%S")
         q = extract_question(en)
         with self.lock:
-            sid = len(self.entries)
-            self.entries.append({"id": sid, "ts": ts, "en": en, "zh": zh, "q": q})
-            self.broadcast({"type": "final", "id": sid, "ts": ts, "en": en, "zh": zh, "q": q})
+            sid = self.next_id
+            self.next_id += 1
+            entry = {"id": sid, "ts": ts, "en": en, "zh": zh, "q": q, "block": block}
+            self.entries.append(entry)
+            self.by_id[sid] = entry
+            self.broadcast({"type": "final", **entry})
         print(f"\n\033[90m{ts}\033[0m  {en}")
         if zh and self.show_zh:
             print(f"          \033[1m{zh}\033[0m", flush=True)   # bold, default (black) colour
@@ -191,8 +209,11 @@ class Output:
     def set_zh(self, sid, zh):
         """The translation of sentence `sid` is ready."""
         with self.lock:
-            self.entries[sid]["zh"] = zh
-            en = self.entries[sid]["en"]
+            entry = self.by_id.get(sid)
+            if entry is None:                 # the sentence was replaced by a refined version in the meantime
+                return
+            entry["zh"] = zh
+            en = entry["en"]
             self.broadcast({"type": "zh", "id": sid, "zh": zh})
         if self.show_zh:
             self._clear_partial()
@@ -200,6 +221,31 @@ class Output:
             print(f"{lead}\033[1m{zh}\033[0m", flush=True)
         self.f.write(f"         {zh}\n")
         self.f.flush()
+
+    def replace_block(self, block, sentences):
+        """Swap the sentences of one block for a better version of the same speech. Returns [(id, english)] of the
+        new entries (their translations are still to come), or [] when nothing was replaced."""
+        if not sentences:
+            return []
+        with self.lock:
+            olds = [e for e in self.entries if e["block"] == block]
+            if not olds:
+                return []
+            times = spread_times(olds[0]["ts"], olds[-1]["ts"], len(sentences))
+            news = []
+            for t, sent in zip(times, sentences):
+                news.append({"id": self.next_id, "ts": t, "en": sent, "zh": "", "q": extract_question(sent), "block": block})
+                self.next_id += 1
+            at = self.entries.index(olds[0])
+            self.entries = [e for e in self.entries if e["block"] != block]
+            self.entries[at:at] = news
+            for e in olds:
+                self.by_id.pop(e["id"], None)
+            self.by_id.update({e["id"]: e for e in news})
+            self.broadcast({"type": "replace", "drop": [e["id"] for e in olds], "entries": news})
+        self.f.write(f"[refined {olds[0]['ts']}] " + " ".join(sentences) + "\n")
+        self.f.flush()
+        return [(e["id"], e["en"]) for e in news]
 
     def save_md(self):
         """Write everything captured so far to a Markdown file (overwrites the previous snapshot)."""
@@ -721,12 +767,16 @@ const qs=[];
 function renderQ(){const bar=document.getElementById("qbar"),box=document.getElementById("qlist");bar.hidden=!qs.length;box.textContent="";
  qs.slice(-3).reverse().forEach(x=>{const r=document.createElement("div"),t=document.createElement("span");t.className="t";t.textContent=x.ts;r.append(t,document.createTextNode(x.q));
   r.onclick=()=>{if(document.body.classList.contains("focus"))setFocus(false);x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
-function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
+function makeEntry(ev){const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
  const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,document.createTextNode(ev.en));
- d.dataset.id=ev.id;const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");z.textContent=ev.zh||"…";d.append(z);
+ d.dataset.id=ev.id;d.dataset.q=ev.q||"";const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");z.textContent=ev.zh||"…";d.append(z);return d}
+function rebuildQ(){qs.length=0;document.querySelectorAll(".e.q").forEach(el=>qs.push({ts:el.querySelector(".ts").textContent,q:el.dataset.q,el}));renderQ()}
+function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=makeEntry(ev);
  log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
+function replaceBlock(ev){const olds=ev.drop.map(id=>document.querySelector('.e[data-id="'+id+'"]')).filter(Boolean);const anchor=olds[0]||part;
+ ev.entries.forEach(n=>log.insertBefore(makeEntry(n),anchor));olds.forEach(el=>el.remove());rebuildQ();layout()}
 const es=new EventSource("/events");
-es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="zh"){const z=document.querySelector('.e[data-id="'+ev.id+'"] .zh');if(z){z.textContent=ev.zh;z.classList.remove("wait")}return}if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
+es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="replace")return replaceBlock(ev);if(ev.type==="zh"){const z=document.querySelector('.e[data-id="'+ev.id+'"] .zh');if(z){z.textContent=ev.zh;z.classList.remove("wait")}return}if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
 paint();
 </script></body></html>"""
 
