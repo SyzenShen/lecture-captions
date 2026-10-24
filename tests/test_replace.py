@@ -76,6 +76,12 @@ class ReplaceBlock(unittest.TestCase):
         self.assertEqual(self.out.replace_block(1, []), [])
         self.assertEqual(self.texts(), before)
 
+    def test_a_result_that_lost_most_of_the_speech_is_not_accepted(self):
+        before = self.texts()
+        self.assertEqual(self.out.replace_block(1, ["Beta."], min_ratio=0.6), [])      # 1 word for 4
+        self.assertEqual(self.texts(), before)
+        self.assertEqual(len(self.out.replace_block(1, ["Beta one two three."], min_ratio=0.6)), 1)
+
     def test_notes_use_the_refined_text(self):
         self.out.replace_block(1, ["Better beta."])
         md = live.render_markdown(self.out.entries, self.out.started)

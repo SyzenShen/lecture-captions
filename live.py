@@ -222,14 +222,17 @@ class Output:
         self.f.write(f"         {zh}\n")
         self.f.flush()
 
-    def replace_block(self, block, sentences):
+    def replace_block(self, block, sentences, min_ratio=0.0):
         """Swap the sentences of one block for a better version of the same speech. Returns [(id, english)] of the
-        new entries (their translations are still to come), or [] when nothing was replaced."""
+        new entries (their translations are still to come), or [] when nothing was replaced (also when the new version has
+        fewer than min_ratio times the old number of words: that is a decoder dropping speech, not an improvement)."""
         if not sentences:
             return []
         with self.lock:
             olds = [e for e in self.entries if e["block"] == block]
             if not olds:
+                return []
+            if sum(len(x.split()) for x in sentences) < min_ratio * sum(len(e["en"].split()) for e in olds):
                 return []
             times = spread_times(olds[0]["ts"], olds[-1]["ts"], len(sentences))
             news = []
@@ -330,8 +333,8 @@ def draft_loop(model, seg, display, every, stop):
 
 
 class BlockGrouper:
-    """Groups consecutive chunks into blocks of at least `seconds` of speech, so a block ends at a pause.
-    seconds = 0 turns it off (every chunk is block 0 and never ends one)."""
+    """Groups consecutive chunks into blocks of at least `seconds` of speech. A block ends at the first real pause once it
+    is long enough, or at 1.8x that length whatever happens. seconds = 0 turns it off (every chunk is block 0)."""
 
     def __init__(self, seconds=0.0):
         self.seconds, self.block, self.start = seconds, 0, None
@@ -343,7 +346,8 @@ class BlockGrouper:
             return audio, start, end, forced, 0, False
         if self.start is None:
             self.start = start
-        block, ends = self.block, end - self.start >= self.seconds
+        span = end - self.start
+        block, ends = self.block, span >= self.seconds and (not forced or span >= 1.8 * self.seconds)
         if ends:
             self.block, self.start = self.block + 1, None
         return audio, start, end, forced, block, ends
@@ -352,6 +356,57 @@ class BlockGrouper:
         """An explicit break (pause, end of the lecture): the next chunk starts a new block."""
         if self.start is not None:
             self.block, self.start = self.block + 1, None
+
+
+class BlockAudio:
+    """Collects the audio of each block (same grouping as BlockGrouper) and hands finished blocks to the refiner queue."""
+
+    def __init__(self, rq):
+        self.rq, self.parts, self.block = rq, [], None
+
+    def add(self, tagged):
+        audio, _, _, _, block, ends = tagged
+        self.parts.append(audio)
+        self.block = block
+        if ends:
+            self.close()
+
+    def close(self):
+        if self.parts:
+            self.rq.put((self.block, np.concatenate(self.parts)))
+            self.parts = []
+
+
+class Refined:
+    """A better version of one block, sent to the worker so it is applied after the block's live sentences exist."""
+
+    def __init__(self, block, sentences):
+        self.block, self.sentences = block, sentences
+
+
+MAX_REFINE_BACKLOG = 3     # blocks waiting for the refiner: beyond this the oldest is left as it is (the live text stays)
+
+
+def refiner(rq, model, q):
+    """Decode each finished block once more with a stronger model; the worker swaps the block's sentences for the result."""
+    while True:
+        item = rq.get()
+        if item is None:
+            return
+        while rq.qsize() >= MAX_REFINE_BACKLOG:       # falling behind: skip the oldest rather than lag further
+            skipped = rq.get()
+            if skipped is None:
+                return
+            if os.environ.get("LIVE_DEBUG"):
+                print(f"[dbg] refiner behind, skipped block {skipped[0]}", file=sys.stderr)
+        block, audio = item
+        t0 = time.time()
+        text = transcribe(model, audio, "", careful=True)
+        if os.environ.get("LIVE_DEBUG"):
+            print(f"[dbg] refined block {block}: {len(audio) / SR:.1f}s audio in {time.time() - t0:.1f}s", file=sys.stderr)
+        sentences = split_sentences(text)
+        if sentences:
+            q.put(Refined(block, sentences))
 
 
 def start_translator(translate, out):
@@ -444,13 +499,16 @@ def clean_prompt(p):
     return ascii_p
 
 
-def transcribe(model, audio, context, beam=None):
+def transcribe(model, audio, context, beam=None, careful=False):
+    """careful=True is for long audio decoded once (the block refiner): retry at a higher temperature when the output
+    looks like a repetition loop. The live path leaves it off because a retry can make one chunk take 5x longer."""
     prompt = PROMPT.strip() or None
+    retry = dict(temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0), compression_ratio_threshold=2.4) if careful else dict(temperature=0.0)
     segs, _ = model.transcribe(
         normalise(audio), language="en", beam_size=beam or BEAM, vad_filter=True,
         condition_on_previous_text=False, initial_prompt=prompt, no_speech_threshold=0.6,
         max_new_tokens=int(len(audio) / SR * 7) + 20,   # a repetition loop would otherwise run to 448 tokens (~10 s)
-        temperature=0.0,   # no retry-at-higher-temperature fallback: it can make one chunk take 5x longer
+        **retry,
     )
     keep = []
     for sg in segs:
@@ -534,7 +592,11 @@ def worker(q, model, tq, out, seg, display):
             if item is None:
                 finish()
                 return
-            if item == "flush":
+            if isinstance(item, Refined):
+                for sid, en in out.replace_block(item.block, item.sentences, min_ratio=0.6):
+                    tq.put((sid, en))
+                continue
+            if isinstance(item, str) and item == "flush":
                 finish()
                 display.clear()
                 continue
@@ -895,6 +957,14 @@ def start_key_listener(out):
 
 
 # ---------------------------------------------------------------- main
+# defaults per power situation (explicit flags always win)
+PROFILES = {
+    "battery": {"no_draft": True},
+    "balanced": {},
+    "plugged": {"refine_model": "large-v3-turbo", "block_seconds": 15.0},
+}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--model", default="small.en", help="tiny.en/base.en/small.en/medium.en (default small.en)")
@@ -913,7 +983,11 @@ def main():
     ap.add_argument("--no-draft", action="store_true", help="no draft text: about 40%% less CPU, first words appear later")
     ap.add_argument("--draft-every", type=float, default=1.0, help="seconds between drafts")
     ap.add_argument("--draft-threads", type=int, default=2)
-    ap.add_argument("--block-seconds", type=float, default=0.0, help="group speech into blocks of at least this many seconds, ending at a pause (needed by --refine-model; 0 = off)")
+    ap.add_argument("--profile", choices=list(PROFILES), default="balanced",
+                    help="battery = original behaviour, least CPU; balanced = + grey draft text (default); plugged = + a strong model re-reads every ~15 s block and replaces it (needs power)")
+    ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")
+    ap.add_argument("--refine-threads", type=int, default=4)
+    ap.add_argument("--block-seconds", type=float, default=0.0, help="length of a block for --refine-model (it ends at the first pause after this many seconds)")
     ap.add_argument("--beam", type=int, default=5, help="beam size (1 = fastest, 5 = more accurate)")
     ap.add_argument("--no-record", action="store_true", help="do not save the session audio (.wav)")
     ap.add_argument("--web", action="store_true", help="open a local page with big captions and one-click buttons")
@@ -921,6 +995,11 @@ def main():
     ap.add_argument("--no-open", action="store_true", help="with --web: do not open the browser automatically")
     ap.add_argument("--list-devices", action="store_true")
     a = ap.parse_args()
+    for key, value in PROFILES[a.profile].items():          # a profile only fills in what the user did not set
+        if getattr(a, key) == ap.get_default(key):
+            setattr(a, key, value)
+    if a.refine_model and not a.block_seconds:
+        a.block_seconds = 15.0
 
     if a.list_devices:
         import sounddevice as sd
@@ -963,12 +1042,40 @@ def main():
         threading.Thread(target=draft_loop, args=(draft_model, seg, display, a.draft_every, stop_drafts), daemon=True).start()
     tq, tt = start_translator(translate, out)
     grouper = BlockGrouper(a.block_seconds)
+    rq, blocks, refine_thread = queue.Queue(), None, None
+    if a.refine_model:
+        print(f"Loading refine model {a.refine_model} ...", flush=True)
+        try:
+            refine_model = WhisperModel(a.refine_model, device="cpu", compute_type="int8", cpu_threads=a.refine_threads)
+            blocks = BlockAudio(rq)
+            refine_thread = threading.Thread(target=refiner, args=(rq, refine_model, q), daemon=True)
+        except Exception as ex:                          # e.g. offline and not downloaded yet: captions must still work
+            print(f"⚠ 精校模型无法加载（{ex}），只用实时字幕。", flush=True)
+            grouper = BlockGrouper(0)
 
     def put_chunk(c):
-        q.put(grouper.tag(c))
+        tagged = grouper.tag(c)
+        q.put(tagged)
+        if blocks is not None:
+            blocks.add(tagged)
+
+    def end_block():
+        grouper.close()
+        if blocks is not None:
+            blocks.close()
+
+    def finish_refining():
+        """Let the refiner deliver what it has; nothing may be queued behind the worker's end marker."""
+        end_block()
+        if refine_thread is not None:
+            print("正在完成最后几段的精校…", flush=True)
+            rq.put(None)
+            refine_thread.join(timeout=90)
 
     t = threading.Thread(target=worker, args=(q, model, tq, out, seg, display), daemon=True)
     t.start()
+    if refine_thread is not None:
+        refine_thread.start()
 
     if a.file:
         from faster_whisper.audio import decode_audio
@@ -984,6 +1091,7 @@ def main():
                 put_chunk(chunk)
         while (tail := seg.flush()) is not None:
             put_chunk(tail)
+        finish_refining()
         q.put(None)
         t.join()
         stop_drafts.set()
@@ -1035,7 +1143,7 @@ def main():
                 stop_capture()
                 while (tail := seg.flush()) is not None:      # what was said just before pausing still gets translated
                     put_chunk(tail)
-                grouper.close()
+                end_block()
                 q.put("flush")
                 out.paused = True
                 out._clear_partial()
@@ -1059,6 +1167,7 @@ def main():
             stop_capture()
         while (tail := seg.flush()) is not None:
             put_chunk(tail)
+        finish_refining()
         q.put(None)
         t.join(timeout=30)
         stop_drafts.set()
