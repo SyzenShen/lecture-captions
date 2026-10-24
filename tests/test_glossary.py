@@ -38,13 +38,13 @@ class FixEnglish(unittest.TestCase):
 class Protect(unittest.TestCase):
     def test_longest_term_wins_and_placeholders_are_in_order(self):
         text, tags = make().protect("A galvanometric mirror system and calcium indicator lines.")
-        self.assertEqual(text, "A ZorvaxA and ZorvaxB.")
+        self.assertEqual(text, "A ZorvaxA and ZorvaxB .")
         self.assertEqual(tags["ZorvaxA"], ("galvanometric mirror system", "振镜系统", False))
         self.assertEqual(tags["ZorvaxB"], ("calcium indicator lines", "钙离子指示剂品系", False))
 
     def test_shorter_term_still_matches_elsewhere(self):
         text, tags = make().protect("a mirror system, a galvanometric mirror system")
-        self.assertEqual(text, "a ZorvaxA, a ZorvaxB")
+        self.assertEqual(text, "a ZorvaxA , a ZorvaxB")
         self.assertEqual(tags["ZorvaxA"][1], "镜子系统")
 
     def test_nothing_to_protect(self):
@@ -76,6 +76,11 @@ class Restore(unittest.TestCase):
         g2.restore("ZorvaxA", tags)
         self.assertEqual(g2.restore("ZorvaxA", tags), "多孔板（multi-well plates）")
 
+    def test_no_stray_space_before_chinese_punctuation(self):
+        g = make()
+        _, tags = g.protect("multi-well plates.")
+        self.assertEqual(g.restore("放入ZorvaxA 。", tags), "放入多孔板（multi-well plates）。")
+
     def test_a_lost_placeholder_is_reported(self):
         g = make()
         _, tags = g.protect("multi-well plates")
@@ -98,6 +103,13 @@ class Translator(unittest.TestCase):
         t = glossary.GlossaryTranslator(base, make())
         self.assertEqual(t("Put it in multi-well plates"), "放入 多孔板（multi-well plates）")
         self.assertEqual(seen, ["Put it in ZorvaxA"])
+
+    def test_a_sentence_that_is_only_the_term_is_not_sent_to_the_translator(self):
+        def base(text):
+            raise AssertionError("must not be called")
+
+        t = glossary.GlossaryTranslator(base, make())
+        self.assertEqual(t("Multi-well plates."), "多孔板（multi-well plates）。")
 
     def test_falls_back_to_plain_translation_when_a_placeholder_is_lost(self):
         calls = []

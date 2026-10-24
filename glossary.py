@@ -72,7 +72,9 @@ class Glossary:
             tags[f"{TAG}{chr(65 + k)}"] = (text[a:b], zh, bang)
         out, last = [], 0
         for k, (a, b, zh, bang) in enumerate(spans):
-            out += [text[last:a], f"{TAG}{chr(65 + k)}"]
+            # a placeholder glued to punctuation ("ZorvaxA.") is broken up by the translator's tokenizer: leave a space
+            gap = " " if text[b:b + 1] in (".", ",", ";", ":", "!", "?") else ""
+            out += [text[last:a], f"{TAG}{chr(65 + k)}", gap]
             last = b
         out.append(text[last:])
         return "".join(out), tags
@@ -94,7 +96,7 @@ class Glossary:
                 shown = chinese
             zh = pat.sub(lambda _m, s=shown: s, zh, count=1)
             zh = pat.sub(shown, zh)
-        return zh
+        return re.sub(r"\s+([。，！？；：])", r"\1", zh)
 
 
 class GlossaryTranslator:
@@ -107,5 +109,8 @@ class GlossaryTranslator:
         protected, tags = self.glossary.protect(text)
         if not tags:
             return self.base(text)
+        if re.fullmatch(r"\W*" + TAG + r"A\W*", protected):      # the sentence is just the term: nothing to translate
+            zh = self.glossary.restore(protected.strip(" .,;:!?") + "。", tags)
+            return zh
         zh = self.glossary.restore(self.base(protected), tags)
         return zh if zh is not None else self.base(text)
