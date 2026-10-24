@@ -19,3 +19,6 @@ prompts/*
 !tests/
 tests/*
 !tests/test_*.py
+!tools/
+tools/*
+!tools/cloud_eval.py
