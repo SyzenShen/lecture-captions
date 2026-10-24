@@ -117,6 +117,23 @@ def make_translator(name):
 
 
 # ---------------------------------------------------------------- output
+def render_markdown(entries, started, topic="", saved_at=None):
+    """Lecture notes as Markdown. `entries` are dicts with ts, en, zh ("" if not translated) and q (a question or "")."""
+    lines = [f"# 课堂记录 {started:%Y-%m-%d %H:%M}", ""]
+    if topic:
+        lines += [f"> 主题提示：{topic}", ""]
+    lines += [f"共 {len(entries)} 句 · 保存于 {saved_at or datetime.now():%H:%M:%S}", "", "---", ""]
+    for e in entries:
+        lines.append(f"**{e['ts']}** {e['en']}  ")
+        if e["zh"]:
+            lines.append(e["zh"])
+        lines.append("")
+    asked = [(e["ts"], e["q"]) for e in entries if e["q"]]
+    if asked:                                        # a review list of what the lecturer asked
+        lines += ["---", "", f"## 课堂提问（{len(asked)}）", ""] + [f"- **{ts}** {q}" for ts, q in asked] + [""]
+    return "\n".join(lines)
+
+
 class Output:
     def __init__(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -188,21 +205,9 @@ class Output:
         """Write everything captured so far to a Markdown file (overwrites the previous snapshot)."""
         with self.lock:
             entries = list(self.entries)
-        lines = [f"# 课堂记录 {self.started:%Y-%m-%d %H:%M}", ""]
-        if self.topic:
-            lines += [f"> 主题提示：{self.topic}", ""]
-        lines += [f"共 {len(entries)} 句 · 保存于 {datetime.now():%H:%M:%S}", "", "---", ""]
-        for e in entries:
-            lines.append(f"**{e['ts']}** {e['en']}  ")
-            if e["zh"]:
-                lines.append(e["zh"])
-            lines.append("")
-        asked = [(e["ts"], e["q"]) for e in entries if e["q"]]
-        if asked:                                        # a review list of what the lecturer asked
-            lines += ["---", "", f"## 课堂提问（{len(asked)}）", ""] + [f"- **{ts}** {q}" for ts, q in asked] + [""]
         os.makedirs(os.path.dirname(self.md_path), exist_ok=True)
         with open(self.md_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+            f.write(render_markdown(entries, self.started, self.topic))
         return len(entries)
 
     def toggle_zh(self):
