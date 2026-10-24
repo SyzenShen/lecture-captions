@@ -42,11 +42,14 @@ ARGOS_DIR = os.path.expanduser(os.environ.get("ARGOS_ZH_DIR") or "~/.local/share
 
 # ---------------------------------------------------------------- translators
 LOOP = re.compile(r"(.)\1{3,}")           # one character repeated 4+ times: a translation/recognition loop
+PHRASE_LOOP = re.compile(r"(.{2,8}?)\1{2,}")   # a 2-8 character phrase repeated 3+ times ("相接相接相接...")
+INTERJECTION = re.compile(r"(?:o+h+|a+h+|u+h+m*|h+m+|w+o+w+|e+r+m*)[\s!.?,]*", re.I)   # "Ooh!" is not worth translating
 
 
 def clean_zh(zh, en):
     """Last line of defence for any translator: squash character runs and cap runaway length."""
     zh = LOOP.sub(lambda m: m.group(1) * 2, zh)
+    zh = PHRASE_LOOP.sub(r"\1", zh)
     zh = re.sub(r"\s*[(（]英语[)）]", "", zh)       # the offline model tags pure-number sentences with "(英语)"
     limit = int(len(en) * 1.8) + 12
     return zh if len(zh) <= limit else zh[:limit].rstrip("，。、 ") + "…"
@@ -73,13 +76,15 @@ class ArgosTranslator:
         return self.sp.decode(out).replace("\u2581", " ").strip()
 
     def __call__(self, text):
+        if INTERJECTION.fullmatch(text.strip()):
+            return ""
         sents = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x]
         if not sents:
             return ""
         parts = []
         for sent in sents:
             zh = self._one(sent)
-            if LOOP.search(zh):                 # same character 4+ times in a row: the model is looping, so retry once
+            if LOOP.search(zh) or PHRASE_LOOP.search(zh):       # the model is looping, so retry once
                 zh = self._one(sent, repetition_penalty=1.2)
             parts.append(zh)
         zh = "".join(parts)

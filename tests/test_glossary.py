@@ -123,5 +123,22 @@ class Translator(unittest.TestCase):
         self.assertEqual(calls, ["Put it in ZorvaxA", "Put it in multi-well plates"])
 
 
+class TranslationGuards(unittest.TestCase):
+    def test_a_repeated_phrase_is_squashed(self):
+        import live
+        self.assertEqual(live.clean_zh("肩相接相接相接相接相接相接", "Shoulder to back."), "肩相接")
+        self.assertEqual(live.clean_zh("这是测试，这是测试，这是测试，结束", "x" * 30), "这是测试，结束")
+
+    def test_normal_repetition_is_left_alone(self):
+        import live
+        self.assertEqual(live.clean_zh("我们可以看到，看到的结果。", "We can see the result."), "我们可以看到，看到的结果。")
+
+    def test_interjections_are_not_translated(self):
+        import live
+        t = live.ArgosTranslator.__new__(live.ArgosTranslator)      # no model needed: it returns before using it
+        self.assertEqual(t("Ooh!"), "")
+        self.assertEqual(t("Hmm."), "")
+
+
 if __name__ == "__main__":
     unittest.main()
