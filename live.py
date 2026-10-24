@@ -28,6 +28,7 @@ from datetime import datetime
 
 import numpy as np
 
+import courses
 from glossary import Glossary, GlossaryTranslator
 from questions import extract_question
 
@@ -1042,8 +1043,71 @@ PROFILES = {
 }
 
 
+def startup_banner(a, course_name, power, url, md_path, mic=None):
+    """What the user sees after start-up: course, profile, where the page is, the keys. Short on purpose."""
+    names = {"battery": "省电：无草稿", "balanced": "平衡：带灰色草稿", "plugged": "插电：强模型逐段精校"}
+    where = {"battery": "电池", "ac": "插电"}.get(power, "")
+    lines = []
+    if course_name:
+        prompt = os.path.basename(a.prompt_file) if a.prompt_file else "无"
+        gl = f" · 术语表 {len(GLOSSARY.terms)} 条/修正 {len(GLOSSARY.fixes)} 条" if GLOSSARY else ""
+        lines.append(f"课程  {course_name}（提示词 {prompt}{gl}）")
+    else:
+        lines.append("课程  未指定，没有提示词（下次可以 ./run.sh 课程名，./run.sh --list-courses 看有哪些）")
+    lines.append(f"档位  {a.profile}（{names.get(a.profile, '')}{'，' + where if where else ''}）")
+    if url:
+        lines.append(f"网页  {url}")
+    if mic:
+        lines.append(f"麦克风  {mic}")
+    lines.append("按键  p 暂停 · c 隐藏/显示中文 · f 专注 · s 保存 · Ctrl+C 结束")
+    lines.append(f"笔记  {md_path}")
+    return "\n".join(lines)
+
+
+LAST_COURSE = os.path.join(HERE, ".last_course")
+
+
+def pick_course(a, all_courses):
+    """Fill in a.prompt_file / a.glossary from the course named on the command line, asked for, or used last time."""
+    last = courses.read_last(LAST_COURSE)
+    name = a.course
+    if not name and sys.stdin.isatty() and all_courses:
+        print("课程（输入名字或编号，回车 = " + (f"上次的 {last}" if last else "不用提示词") + "）：")
+        keys = sorted(all_courses)
+        for i, key in enumerate(keys, 1):
+            print(f"  {i:2d}  {courses.describe(key, all_courses[key])}")
+        try:
+            answer = input("> ").strip()
+        except EOFError:
+            answer = ""
+        if answer.isdigit() and 1 <= int(answer) <= len(keys):
+            name = keys[int(answer) - 1]
+        else:
+            name = answer or last
+        if name and " " in name:                         # "ngs 3": the lesson can be typed here too
+            name, a.lesson = name.split(None, 1)
+    if not name:
+        return None
+    key, matches = courses.resolve(name, all_courses)
+    if key is None:
+        sys.exit(f"找不到课程“{name}”。" + (f"可能是：{', '.join(matches)}" if matches else "用 ./run.sh --list-courses 查看已有的课程。"))
+    course = all_courses[key]
+    if a.lesson is not None and not str(a.lesson).isdigit():
+        sys.exit(f"课号应该是数字，收到“{a.lesson}”。")
+    path = courses.pick_prompt(course, a.lesson)
+    if path is None and a.lesson is not None:
+        sys.exit(f"课程 {key} 没有第 {a.lesson} 课的提示词。已有：{', '.join(courses.lessons(course)) or '无'}")
+    a.prompt_file = path
+    a.glossary = list(a.glossary) + course["glossaries"]
+    courses.write_last(LAST_COURSE, key)
+    return key + (f" 第{a.lesson}课" if a.lesson is not None else "")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    ap.add_argument("course", nargs="?", help="course name (start of a file name in prompts/ or glossary/): its prompt and glossary are used; without it you are asked")
+    ap.add_argument("lesson", nargs="?", help="lesson number, if the course has one prompt file per lesson (e.g. ./run.sh ngs 3)")
+    ap.add_argument("--list-courses", action="store_true", help="show the courses found in prompts/ and glossary/")
     ap.add_argument("--model", default="small.en", help="tiny.en/base.en/small.en/medium.en (default small.en)")
     ap.add_argument("--device", type=int, default=None, help="input device index")
     ap.add_argument("--translator", choices=["argos", "claude", "none"], default="argos")
@@ -1064,19 +1128,31 @@ def main():
                     help="course glossary (see glossary/example_biology.txt): right Chinese for technical terms, fixes for words Whisper keeps mishearing; can be given more than once")
     ap.add_argument("--brackets", choices=["first", "always"], default="first",
                     help="glossary terms: show the English in brackets after the Chinese only the first time (default) or every time")
-    ap.add_argument("--profile", choices=list(PROFILES), default="balanced",
-                    help="battery = original behaviour, least CPU; balanced = + grey draft text (default); plugged = + a strong model re-reads every ~15 s block and replaces it (needs power)")
+    ap.add_argument("--profile", choices=["auto"] + list(PROFILES), default=os.environ.get("CAPTIONS_PROFILE", "auto"),
+                    help="battery = least CPU; balanced = + grey draft text; plugged = + a strong model re-reads every ~15 s block and replaces it (needs power); auto (default) = battery on battery, balanced when plugged in (CAPTIONS_PROFILE sets another default)")
     ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")
     ap.add_argument("--refine-threads", type=int, default=4)
     ap.add_argument("--merge-seconds", type=float, default=0.0, help="decode several consecutive pieces of speech as one, ending at a pause after this many seconds: about half the CPU and more accurate, but the accurate text comes later (0 = one decode per piece)")
     ap.add_argument("--block-seconds", type=float, default=0.0, help="length of a block for --refine-model (it ends at the first pause after this many seconds)")
     ap.add_argument("--beam", type=int, default=None, help="beam size of the accurate pass (profile default 3: no measurable loss on 8-15 s blocks, ~25 %% less CPU than 5)")
     ap.add_argument("--no-record", action="store_true", help="do not save the session audio (.wav)")
-    ap.add_argument("--web", action="store_true", help="open a local page with big captions and one-click buttons")
+    ap.add_argument("--web", action="store_true", help="(the local page is on by default for the microphone; with --file it is only shown with this option)")
+    ap.add_argument("--no-web", action="store_true", help="terminal only, no local page")
     ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--no-open", action="store_true", help="with --web: do not open the browser automatically")
+    ap.add_argument("--no-open", action="store_true", help="do not open the browser automatically")
     ap.add_argument("--list-devices", action="store_true")
     a = ap.parse_args()
+    a.web = not a.no_web and (a.web or not a.file)
+    all_courses = courses.scan(os.path.join(HERE, "prompts"), os.path.join(HERE, "glossary"))
+    if a.list_courses:
+        for key in sorted(all_courses):
+            print("  " + courses.describe(key, all_courses[key]))
+        return
+    course_name, power = None, courses.power_source()
+    if not (a.prompt_file or a.prompt):
+        course_name = pick_course(a, all_courses)
+    if a.profile == "auto":
+        a.profile = "battery" if power == "battery" else "balanced"
     for key, value in PROFILES[a.profile].items():          # a profile only fills in what the user did not set
         if getattr(a, key) == ap.get_default(key):
             setattr(a, key, value)
@@ -1097,20 +1173,19 @@ def main():
     a.prompt = clean_prompt(a.prompt)
     PROMPT, BEAM = a.prompt, a.beam
     from faster_whisper import WhisperModel
-    print(f"Loading Whisper {a.model} ...", flush=True)
+    print("正在加载模型……", flush=True)
     if not a.full_context:
         shorten_encoder_context()
     model = WhisperModel(a.model, device="cpu", compute_type="int8", cpu_threads=a.threads)
     translate = make_translator(a.translator)
     if a.glossary:
         GLOSSARY = Glossary.load([os.path.expanduser(p) for p in a.glossary], always=a.brackets == "always")
-        print(f"Glossary: {len(GLOSSARY.terms)} terms, {len(GLOSSARY.fixes)} fixes", flush=True)
         translate = GlossaryTranslator(translate, GLOSSARY)
+    url = None
     out = Output(os.path.join(HERE, "transcripts", datetime.now().strftime("%Y-%m-%d_%H%M") + ".txt"))
     out.topic = a.prompt
     if a.web:
         url = start_web(out, a.port)
-        print(f"网页界面：{url}", flush=True)
         if not a.no_open:
             import webbrowser
             webbrowser.open(url)
@@ -1124,7 +1199,6 @@ def main():
     stop_drafts = threading.Event()
     late_drafts = None
     if a.draft_model and not a.no_draft:
-        print(f"Loading draft model {a.draft_model} ...", flush=True)
         draft_model = WhisperModel(a.draft_model, device="cpu", compute_type="int8", cpu_threads=a.draft_threads)
         late_drafts = queue.Queue()
         threading.Thread(target=draft_loop, args=(draft_model, seg, display, a.draft_every, stop_drafts, late_drafts), daemon=True).start()
@@ -1132,7 +1206,6 @@ def main():
     grouper, merger = BlockGrouper(a.block_seconds), BlockGrouper(a.merge_seconds)
     rq, blocks, refine_thread = queue.Queue(), None, None
     if a.refine_model:
-        print(f"Loading refine model {a.refine_model} ...", flush=True)
         try:
             refine_model = WhisperModel(a.refine_model, device="cpu", compute_type="int8", cpu_threads=a.refine_threads)
             blocks = BlockAudio(rq)
@@ -1170,6 +1243,7 @@ def main():
         refine_thread.start()
 
     if a.file:
+        print(startup_banner(a, course_name, power, url, out.md_path), flush=True)
         from faster_whisper.audio import decode_audio
         audio = decode_audio(a.file, sampling_rate=SR)
         t_start = time.perf_counter()
@@ -1210,8 +1284,7 @@ def main():
                 put_chunk(chunk)
 
     dev = a.device if a.device is not None else sd.default.device[0]
-    print(f"Listening on: {sd.query_devices(dev)['name']}   (Ctrl+C to stop)\n"
-          f"按 s 保存为 Markdown，按 c 隐藏/显示中文，按 p 暂停/继续\n保存位置 -> {out.md_path}", flush=True)
+    print(startup_banner(a, course_name, power, url, out.md_path, mic=sd.query_devices(dev)["name"]), flush=True)
 
     cap = {"stream": None}
     cap_lock = threading.Lock()

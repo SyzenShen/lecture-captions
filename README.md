@@ -26,12 +26,26 @@ Needs Python 3.10+ and a microphone. Tested on an Intel MacBook Pro (macOS); Win
 git clone https://github.com/SyzenShen/lecture-captions.git
 cd lecture-captions
 ./setup.sh          # venv, packages, offline en->zh model (~100 MB); Whisper small.en (~460 MB) downloads on first run
-./run.sh --web --prompt-file prompts/example_biology.txt
+./run.sh example
 ```
 
 macOS asks for microphone access for your terminal on first use.
 
 ## Use
+
+Put one prompt file per course (or per lesson) in `prompts/` and, if you like, a glossary in `glossary/`; the first word of the file name is the course name
+(`prompts/ngs_full.txt`, `prompts/ngs_3_rnaseq.txt`, `glossary/ngs.txt` all belong to course `ngs`).
+
+```bash
+./run.sh ngs 3      # course ngs, lesson 3 (the lesson is optional; without it ngs_full is used)
+./run.sh ngs        # the course's own prompt + glossary
+./run.sh            # lists the courses; Enter repeats the last one
+```
+
+Names can be shortened to a unique start (`./run.sh mol`). The page opens in your browser, the profile follows the power source
+(battery: `battery`; plugged in: `balanced`; `CAPTIONS_PROFILE=plugged` in `config.local.sh` or `--profile plugged` changes that),
+and start-up prints five lines: course, profile, page address, keys, where the notes go. `./run.sh --list-courses` shows what was found.
+A shell alias makes it shorter still: `alias cap='~/lecture-captions/run.sh'`.
 
 | Key (terminal or web page) | |
 |---|---|
@@ -44,8 +58,8 @@ Useful options (`./run.sh --help` for all):
 
 | Option | |
 |---|---|
-| `--web` | open the local page (`http://127.0.0.1:8765`, localhost only) |
-| `--prompt-file FILE` / `--prompt "..."` | topic vocabulary, **English only**, keep it under ~500 characters |
+| `--no-web` | terminal only; by default the local page (`http://127.0.0.1:8765`, localhost only) opens |
+| `--prompt-file FILE` / `--prompt "..."` (instead of a course name) | topic vocabulary, **English only**, keep it under ~500 characters |
 | `--profile battery\|balanced\|plugged` | power situation (see below); default `balanced` |
 | `--glossary FILE` | course glossary: right Chinese for terms, fixes for mishearings (see below) |
 | `--no-draft` | no grey draft text: about 40 % less CPU on battery, first words appear later |
@@ -77,7 +91,7 @@ running in real time, no translator; one core = 100 %. Accuracy is the word dist
 | `plugged` | + `large-v3-turbo` re-reads every ~15-27 s block (it ends at a pause) and replaces its sentences | about 410 % (not re-measured with the savings above) | - | 17.8-21.6 % (3 stretches, measured before the savings) | as `balanced` | blocks ~10 s after they end |
 
 ```bash
-./run.sh --web --profile plugged --prompt-file prompts/my_course.txt
+./run.sh --profile plugged my_course
 ```
 
 Where the savings come from: the speech is decoded in merged pieces ending at a pause (`--merge-seconds`) instead of one decode per
@@ -105,7 +119,7 @@ calcium indicator line = 钙离子指示剂品系     # translate this term the 
 ```
 
 ```bash
-./run.sh --web --glossary glossary/my_course.txt     # may be given more than once
+./run.sh my_course                  # picks glossary/my_*.txt automatically; or --glossary FILE (may be given more than once)
 ```
 
 Terms are swapped for a placeholder before translation and back afterwards; the first time a term appears its English follows in brackets

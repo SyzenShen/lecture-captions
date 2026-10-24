@@ -26,12 +26,23 @@
 git clone https://github.com/SyzenShen/lecture-captions.git
 cd lecture-captions
 ./setup.sh          # 虚拟环境、依赖、离线英中翻译模型（约 100 MB）；首次运行会自动下载 Whisper small.en（约 460 MB）
-./run.sh --web --prompt-file prompts/example_biology.txt
+./run.sh example
 ```
 
 第一次使用时 macOS 会请求终端的麦克风权限。
 
 ## 使用
+
+每门课（或每节课）在 `prompts/` 里放一个提示词文件，需要的话再在 `glossary/` 里放一个术语表；文件名的第一个词就是课程名
+（`prompts/ngs_full.txt`、`prompts/ngs_3_rnaseq.txt`、`glossary/ngs.txt` 都属于课程 `ngs`）。
+
+```bash
+./run.sh ngs 3      # 课程 ngs 的第 3 课（课号可以省略，省略时用 ngs_full）
+./run.sh ngs        # 这门课自己的提示词 + 术语表
+./run.sh            # 列出所有课程，直接回车 = 上次那门
+```
+
+课程名写开头几个字母就行（`./run.sh mol`）。网页会自动打开；档位跟着电源走（电池：`battery`；插电：`balanced`；在 `config.local.sh` 里写 `CAPTIONS_PROFILE=plugged` 或用 `--profile plugged` 可以改）。启动时只打印五行：课程、档位、网页地址、按键、笔记位置。`./run.sh --list-courses` 查看找到了哪些课程。再省一步可以加个别名：`alias cap='~/lecture-captions/run.sh'`。
 
 | 按键（终端或网页都可用） | |
 |---|---|
@@ -40,7 +51,7 @@ cd lecture-captions
 | `p` | 暂停 / 继续（暂停时麦克风真的被关闭） |
 | `f` | 专注模式：只显示最近 3 句，点击才显示中文（此时 `c` 显示/隐藏全部中文） |
 
-常用选项：`--web`（网页）、`--prompt-file`（主题提示词，**只能写英文**，建议 500 字符以内）、
+常用选项：`--no-web`（只用终端，默认会打开网页）、`--prompt-file`（不用课程名时）（主题提示词，**只能写英文**，建议 500 字符以内）、
 `--profile battery|balanced|plugged`（用电情况，见下一节，默认 balanced）、`--glossary`（课程术语表，见下文）、`--no-draft`（不要灰色草稿：电池模式下 CPU 少约 40%，但前几个词出现得更晚）、`--chunk`（每次识别的最长秒数，默认 6）、`--translator none`（只要英文）、
 `--device N` / `--list-devices`（选择输入设备）。复制 `config.example.sh` 为 `config.local.sh`（不会被提交）可以设置笔记保存位置。
 
@@ -61,7 +72,7 @@ cd lecture-captions
 | `plugged` | + `large-v3-turbo` 每约 15–27 秒（在停顿处结束）重读一个片段并替换其句子 | 约 410%（尚未用上述节省重测） | - | 17.8–21.6%（3 段，节省之前测的） | 同 `balanced` | 片段结束后约 10 秒 |
 
 ```bash
-./run.sh --web --profile plugged --prompt-file prompts/my_course.txt
+./run.sh --profile plugged my_course
 ```
 
 省电的来源：语音按“到一个停顿处”合并后一次解码（`--merge-seconds`），而不是每个约 3.5 秒的片段单独解码（每次解码都会把音频补到 15 秒，短片段浪费大部分计算，更长的上下文也读得更准）；OpenMP 线程被动等待而不是空转；在这么长的片段上 beam 3 和单线程不影响准确率；草稿在听到 1 秒语音后就出第一版，之后每 1.5 秒更新。代价是准确文字比以前（6 秒）更晚到；`--merge-seconds 0` 可以恢复旧的节奏，CPU 约翻倍。中文跟随准确文字。
@@ -80,7 +91,7 @@ calcium indicator line = 钙离子指示剂品系     # 这个术语按我写的
 ```
 
 ```bash
-./run.sh --web --glossary glossary/my_course.txt     # 可以给多个
+./run.sh my_course                  # 自动用 glossary/my_*.txt；也可以 --glossary 文件（可以给多个）
 ```
 
 翻译前先把术语换成占位符，翻译后再换回；术语第一次出现时后面会带上英文括号（多孔板（multi-well plates）），这样即使猜错了也能对回原文（`--brackets always` 每次都带；`term = 中文 !` 让某个术语每次都带）。不好翻译的术语可以写成 `galvanometric mirror = -`，这样这句话里就只显示括号里的英文：（galvanometric mirror）。如果翻译器丢掉了占位符，这一句就不用术语表重新翻译。示例见 `glossary/example_biology.txt`；你自己放在 `glossary/` 里的术语表不会被提交。更大的离线模型没有帮助：NLLB-200（600M 和 1.3B）会丢字、长句翻到一半就停，CPU 是现在翻译器的 7–12 倍。
