@@ -307,6 +307,7 @@ class Display:
         self.out = out
         self.pending = ""
         self.drafts = {}
+        self.draft_samples = {}      # key -> how much audio the current draft of that segment covers
         self.upto = -1.0             # segments starting at or before this already have their accurate text
         self.lock = threading.Lock()
 
@@ -334,12 +335,21 @@ class Display:
             self.pending = text
             self._show()
 
-    def set_draft(self, key, text):
+    def set_draft(self, key, text, samples=None):
         with self.lock:
             if key <= self.upto:          # the accurate text arrived while this draft was being made: it would never go away
                 return
             self.drafts[key] = text
+            if samples is not None:
+                self.draft_samples[key] = samples
             self._show()
+
+    def needs_draft(self, key, samples):
+        """True when the segment has no draft yet, or its draft stops more than 0.3 s before the end of the segment."""
+        with self.lock:
+            if key <= self.upto:
+                return False
+            return key not in self.drafts or self.draft_samples.get(key, 0) < samples - 0.3 * SR
 
     def has_draft(self, key):
         with self.lock:
@@ -351,6 +361,7 @@ class Display:
             self.upto = max(self.upto, upto)
             for k in [k for k in self.drafts if k <= upto]:
                 del self.drafts[k]
+                self.draft_samples.pop(k, None)
             self._show()                  # repaint now: a segment with no usable result must not leave its draft behind
 
     def clear(self):
@@ -360,31 +371,32 @@ class Display:
 
 
 def draft_loop(model, seg, display, every, stop, late=None):
-    """Quick tentative text for the segment being spoken right now. The first draft comes as soon as a second of speech
-    has been heard (that is what the reader waits for); after that it is refreshed at most every `every` seconds."""
-    last_key, last_len, last_time = None, 0, 0.0
-    while not stop.wait(0.25):
-        while late is not None and not late.empty():      # a piece that ended before it ever got a draft (too short, or the loop was busy)
+    """Quick tentative text for the segment being spoken right now. The first draft comes after 0.8 s of speech (that is what the
+    reader waits for); after that it is refreshed whenever `every` seconds have passed since the last one started. When a
+    segment ends, its draft is completed once on the whole segment, so the last words are never missing."""
+    last_key, last_len, last_start = None, 0, 0.0
+    while not stop.wait(0.15):
+        while late is not None and not late.empty():      # a segment that ended: complete (or create) its draft on all of its audio
             audio, start = late.get_nowait()
             key = round(start, 2)
-            if not display.has_draft(key):
-                text = transcribe(model, audio, "", beam=1, vad=False)
+            if display.needs_draft(key, len(audio)):
+                text = transcribe(model, audio, "", beam=1, vad=False, draft=True)
                 if len(text) >= 2 and not HALLUCINATION.fullmatch(text):
-                    display.set_draft(key, text)
+                    display.set_draft(key, text, len(audio))
         snap = seg.snapshot()
         if snap is None:
             continue
         audio, start = snap
-        if len(audio) < SR:                       # less than a second of speech: nothing worth showing yet
+        if len(audio) < 0.8 * SR:                 # less than a moment of speech: nothing worth showing yet
             continue
         key = round(start, 2)
         now = time.monotonic()
-        if key == last_key and (now - last_time < every or len(audio) - last_len < SR // 2):
-            continue                              # too soon, or barely any new audio since the last draft
-        text = transcribe(model, audio, "", beam=1, vad=False)       # the segmenter already cut this at pauses
-        last_key, last_len, last_time = key, len(audio), time.monotonic()
+        if key == last_key and (now - last_start < every or len(audio) - last_len < SR // 2):
+            continue                              # too soon (counted from the start of the last draft), or barely any new audio
+        last_key, last_len, last_start = key, len(audio), now
+        text = transcribe(model, audio, "", beam=1, vad=False, draft=True)       # the segmenter already cut this at pauses
         if len(text) >= 2 and not HALLUCINATION.fullmatch(text):
-            display.set_draft(key, text)
+            display.set_draft(key, text, len(audio))
 
 
 class BlockGrouper:
@@ -555,28 +567,29 @@ def clean_prompt(p):
     return ascii_p
 
 
-def transcribe(model, audio, context, beam=None, careful=False, as_segments=False, vad=True):
-    """careful=True is for long audio decoded once (the block refiner): retry at a higher temperature when the output
+def transcribe(model, audio, context, beam=None, careful=False, as_segments=False, vad=True, draft=False):
+    """draft=True is for the quick grey text: completeness matters more than precision, so the confidence filters that drop
+    doubtful segments are off (they cost 8 % of the words). careful=True is for long audio decoded once (the block refiner): retry at a higher temperature when the output
     looks like a repetition loop. The live path leaves it off because a retry can make one chunk take 5x longer."""
     prompt = PROMPT.strip() or None
     retry = dict(temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0), compression_ratio_threshold=2.4) if careful else dict(temperature=0.0)
     segs, _ = model.transcribe(
         normalise(audio), language="en", beam_size=beam or BEAM, vad_filter=vad,
-        condition_on_previous_text=False, initial_prompt=prompt, no_speech_threshold=0.6,
+        condition_on_previous_text=False, initial_prompt=prompt, no_speech_threshold=0.9 if draft else 0.6,
         max_new_tokens=int(len(audio) / SR * 7) + 20,   # a repetition loop would otherwise run to 448 tokens (~10 s)
         **retry,
     )
     keep = []
     for sg in segs:
         # low-confidence output on noisy audio is almost always a hallucination ("So.", "Thank you.")
-        if sg.avg_logprob < -1.0 or (sg.no_speech_prob > 0.5 and sg.avg_logprob < -0.6):
+        if not draft and (sg.avg_logprob < -1.0 or (sg.no_speech_prob > 0.5 and sg.avg_logprob < -0.6)):
             if os.environ.get("LIVE_DEBUG"):
                 print(f"[dbg] dropped {sg.text!r} logprob={sg.avg_logprob:.2f} nospeech={sg.no_speech_prob:.2f}",
                       file=sys.stderr)
             continue
         seg_text = sg.text.strip()
         # this is an English-only model: CJK characters or subtitle markup like {\fn...} are always hallucinations
-        if NON_ENGLISH.search(seg_text) or DEGENERATE.search(seg_text) or sg.compression_ratio > 2.4 or is_prompt_echo(seg_text, prompt, sg):
+        if NON_ENGLISH.search(seg_text) or DEGENERATE.search(seg_text) or sg.compression_ratio > 2.4 or (not draft and is_prompt_echo(seg_text, prompt, sg)):
             if os.environ.get("LIVE_DEBUG"):
                 print(f"[dbg] dropped non-English/prompt-echo {seg_text!r}", file=sys.stderr)
             continue
@@ -1112,7 +1125,7 @@ def start_key_listener(out):
 # ---------------------------------------------------------------- main
 # defaults per power situation (explicit flags always win)
 PROFILES = {
-    "battery": {"no_draft": True, "merge_seconds": 6.0, "threads": 1, "beam": 3, "draft_every": 1.5, "draft_threads": 1},
+    "battery": {"no_draft": True, "merge_seconds": 6.0, "threads": 1, "beam": 3, "draft_every": 1.0, "draft_threads": 1},
     "balanced": {"merge_seconds": 10.0, "threads": 1, "beam": 3, "draft_every": 1.5, "draft_threads": 1},
     "plugged": {"merge_seconds": 10.0, "threads": 2, "beam": 3, "draft_every": 1.0, "draft_threads": 2,
                 "refine_model": "large-v3-turbo", "block_seconds": 15.0},
@@ -1205,7 +1218,7 @@ def main():
     ap.add_argument("--brackets", choices=["first", "always"], default="always",
                     help="glossary terms are shown as English（中文）: every time (default), or only the first time, plain Chinese after that")
     ap.add_argument("--profile", choices=["auto"] + list(PROFILES), default=os.environ.get("CAPTIONS_PROFILE", "auto"),
-                    help="battery = least CPU; balanced = + grey draft text; plugged = + a strong model re-reads every ~15 s block and replaces it (needs power); auto (default) = battery on battery, balanced when plugged in (CAPTIONS_PROFILE sets another default)")
+                    help="battery = least CPU; balanced = + grey draft text; plugged = + a strong model re-reads every ~15 s block and replaces it (needs power); auto (default) = balanced, or battery when running on less than 30 %% charge (CAPTIONS_PROFILE sets another default)")
     ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")
     ap.add_argument("--refine-threads", type=int, default=4)
     ap.add_argument("--merge-seconds", type=float, default=0.0, help="decode several consecutive pieces of speech as one, ending at a pause after this many seconds: about half the CPU and more accurate, but the accurate text comes later (0 = one decode per piece)")
@@ -1226,11 +1239,11 @@ def main():
         for key in sorted(all_courses):
             print("  " + courses.describe(key, all_courses[key]))
         return
-    course_name, power = None, courses.power_source()
+    course_name, (power, charge) = None, courses.power_state()
     if not (a.prompt_file or a.prompt):
         course_name = pick_course(a, all_courses)
     if a.profile == "auto":
-        a.profile = "battery" if power == "battery" else "balanced"
+        a.profile = courses.auto_profile(power, charge)
     for key, value in PROFILES[a.profile].items():          # a profile only fills in what the user did not set
         if getattr(a, key) == ap.get_default(key):
             setattr(a, key, value)

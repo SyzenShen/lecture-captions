@@ -45,7 +45,7 @@ Put one prompt file per course (or per lesson) in `prompts/` and, if you like, a
 ```
 
 Names can be shortened to a unique start (`./run.sh mol`). The page opens in your browser, the profile follows the power source
-(battery: `battery`; plugged in: `balanced`; `CAPTIONS_PROFILE=plugged` in `config.local.sh` or `--profile plugged` changes that),
+(`balanced`, or `battery` when running on less than 30 % charge; `CAPTIONS_PROFILE=plugged` in `config.local.sh` or `--profile plugged` changes that),
 and start-up prints five lines: course, profile, page address, keys, where the notes go. `./run.sh --list-courses` shows what was found.
 A shell alias makes it shorter still: `alias cap='~/lecture-captions/run.sh'`.
 
@@ -90,7 +90,7 @@ running in real time, no translator; one core = 100 %. Accuracy is the word dist
 | Profile | What runs | CPU before | CPU now | Accuracy before / now | First words | Accurate text replaces the draft after |
 |---|---|---|---|---|---|---|
 | `battery` | `small.en` on merged ~6 s pieces, beam 3, 1 thread, no draft | 122 % | **52 %** | 25.7 % / 23.6 % | - | about 12 s |
-| `balanced` (default) | + `tiny.en` grey drafts | 179 % | **87 %** | 25.7 % / 18.9 % | median 1.6 s (p90 3.5 s) | median 12.7 s (p90 18 s) |
+| `balanced` (default) | + `tiny.en` grey drafts | 179 % | **87 %** (about 120 % since the drafts were made complete and quicker, see below) | 25.7 % / 18.9 % | median 1.3 s (p90 1.4 s, max 2.0 s) | median 12.7 s (p90 18 s) |
 | `plugged` | + `large-v3-turbo` re-reads every ~15-27 s block (it ends at a pause) and replaces its sentences | about 410 % (not re-measured with the savings above) | - | 17.8-21.6 % (3 stretches, measured before the savings) | as `balanced` | blocks ~10 s after they end |
 
 ```bash
@@ -100,7 +100,7 @@ running in real time, no translator; one core = 100 %. Accuracy is the word dist
 Where the savings come from: the speech is decoded in merged pieces ending at a pause (`--merge-seconds`) instead of one decode per
 3.5 s piece (each decode pads its audio to 15 s, so short pieces waste most of the work, and longer context reads better);
 OpenMP threads wait passively instead of spinning; beam 3 and one thread cost no measurable accuracy on blocks this long;
-the draft model's first draft comes after 1 s of speech and later drafts are spaced 1.5 s. The price is that the accurate text arrives
+the draft model's first draft comes after 0.8 s of speech and later drafts are spaced 1.5 s (`--draft-every`; 1.0 s costs about 20 more points of CPU). When a segment ends, its draft is completed once on the whole segment and the confidence filters that drop doubtful words are off for drafts, so every segment has a complete draft (61 of 61 on the test lecture, the last draft covered the whole segment; before: 57 of 61, and the last draft often stopped short). The price is that the accurate text arrives
 later than before (6 s); `--merge-seconds 0` restores the old timing at about twice the CPU. The Chinese follows the accurate text.
 
 `--refine-model`, `--refine-threads`, `--block-seconds` and `--beam` set the pieces separately. If the refiner falls more than three

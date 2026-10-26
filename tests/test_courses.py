@@ -64,6 +64,23 @@ class Courses(unittest.TestCase):
         self.assertEqual(courses.read_last(path), "ngs")
 
 
+class Power(unittest.TestCase):
+    BATT = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t76%; discharging; 3:05 remaining present: true\n"
+    AC = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining present: true\n"
+
+    def test_parse(self):
+        self.assertEqual(courses.parse_power(self.BATT), ("battery", 76))
+        self.assertEqual(courses.parse_power(self.AC), ("ac", 100))
+        self.assertEqual(courses.parse_power(""), (None, None))
+
+    def test_auto_profile_keeps_the_drafts_unless_the_battery_is_nearly_empty(self):
+        self.assertEqual(courses.auto_profile("ac", 100), "balanced")
+        self.assertEqual(courses.auto_profile("battery", 76), "balanced")
+        self.assertEqual(courses.auto_profile("battery", 29), "battery")
+        self.assertEqual(courses.auto_profile(None, None), "balanced")
+        self.assertEqual(courses.auto_profile("battery", None), "balanced")
+
+
 class PickCourse(unittest.TestCase):
     """The interactive part in live.py: ask, remember, fill in the prompt file and glossaries."""
 

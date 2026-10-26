@@ -72,15 +72,33 @@ def write_last(path, key):
         pass
 
 
-def power_source():
-    """"ac", "battery" or None (unknown / not a laptop), from macOS pmset."""
+def parse_power(text):
+    """("ac" | "battery" | None, charge in percent or None) from the output of macOS `pmset -g batt`."""
+    percent = re.search(r"(\d+)%", text)
+    charge = int(percent.group(1)) if percent else None
+    if re.search(r"Battery Power", text):
+        return "battery", charge
+    if re.search(r"AC Power", text):
+        return "ac", charge
+    return None, charge
+
+
+def power_state():
     import subprocess
     try:
-        text = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=3).stdout
+        return parse_power(subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=3).stdout)
     except (OSError, subprocess.SubprocessError):
-        return None
-    if re.search(r"Battery Power", text):
-        return "battery"
-    if re.search(r"AC Power", text):
-        return "ac"
-    return None
+        return None, None
+
+
+def power_source():
+    """"ac", "battery" or None (unknown / not a laptop), from macOS pmset."""
+    return power_state()[0]
+
+
+LOW_BATTERY = 30      # percent: below this, on battery, the automatic profile switches to the one without drafts
+
+
+def auto_profile(source, charge):
+    """The profile --profile auto uses: balanced, unless the laptop runs on a nearly empty battery."""
+    return "battery" if source == "battery" and charge is not None and charge < LOW_BATTERY else "balanced"

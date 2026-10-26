@@ -72,6 +72,15 @@ class DisplayTest(unittest.TestCase):
         self.d.refined(5.0)
         self.assertEqual(self.out.rows[-1], [])
 
+    def test_a_draft_that_stops_short_of_the_segment_needs_a_new_one(self):
+        sr = live.SR
+        self.assertTrue(self.d.needs_draft(3.0, 4 * sr))               # none yet
+        self.d.set_draft(3.0, "so today", samples=3 * sr)
+        self.assertTrue(self.d.needs_draft(3.0, 4 * sr))               # covers 3 s of a 4 s segment
+        self.assertFalse(self.d.needs_draft(3.0, int(3.2 * sr)))       # close enough
+        self.d.refined(3.0)
+        self.assertFalse(self.d.needs_draft(3.0, 4 * sr))              # accurate text is already there
+
     def test_a_draft_is_updated_in_place(self):
         self.d.set_draft(5.0, "so today")
         self.d.set_draft(5.0, "so today we talk about")
