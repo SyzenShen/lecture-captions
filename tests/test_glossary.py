@@ -179,7 +179,7 @@ class Tidy(unittest.TestCase):
 
     def test_long_glossary_translations_are_not_cut_short(self):
         import live
-        zh = "这是" + glossary.MARK_S + "半胱氨酸（cysteine）" + glossary.MARK_E + "，" + "很长的一句话" * 6
+        zh = "这是" + glossary.MARK_S + "半胱氨酸（cysteine）" + glossary.MARK_E + "，而且这个氨基酸的性质决定了蛋白质折叠的方式，也决定了它与其他分子的相互作用强度和稳定性"
         self.assertEqual(live.clean_zh(zh, "Cysteine."), zh)
 
 
