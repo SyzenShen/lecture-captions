@@ -96,7 +96,7 @@ calcium indicator line = 钙离子指示剂品系     # 这个术语按我写的
 ./run.sh my_course                  # 自动用 glossary/my_*.txt；也可以 --glossary 文件（可以给多个）
 ```
 
-翻译前先把术语换成占位符，翻译后再换回；术语后面每次都会带上英文括号（多孔板（multi-well plates）），网页上整个术语显示为深红色，这样即使猜错了也能对回原文（`--brackets first` 只在第一次出现时带括号）。不好翻译的术语可以写成 `galvanometric mirror = -`，这样这句话里就只显示括号里的英文：（galvanometric mirror）。如果翻译器丢掉了占位符，这一句就不用术语表重新翻译。名为 `glossary/common_*.txt` 的术语表对所有课程生效（比如基础生化）。示例见 `glossary/example_biology.txt`；你自己放在 `glossary/` 里的术语表不会被提交。更大的离线模型没有帮助：NLLB-200（600M 和 1.3B）会丢字、长句翻到一半就停，CPU 是现在翻译器的 7–12 倍。
+翻译前先把术语换成占位符，翻译后再换回；术语后面每次都会带上英文括号（多孔板（multi-well plates）），网页上整个术语显示为深红色，这样即使猜错了也能对回原文（`--brackets first` 只在第一次出现时带括号）。不好翻译的术语可以写成 `galvanometric mirror = -`，这样这句话里就只显示括号里的英文：（galvanometric mirror）。如果翻译器丢掉了占位符，这一句就不用术语表重新翻译。术语表文件一改动就会重新读取，所以课间加一个术语，下一句就生效，不用重启。名为 `glossary/common_*.txt` 的术语表对所有课程生效（比如基础生化）。示例见 `glossary/example_biology.txt`；你自己放在 `glossary/` 里的术语表不会被提交。更大的离线模型没有帮助：NLLB-200（600M 和 1.3B）会丢字、长句翻到一半就停，CPU 是现在翻译器的 7–12 倍。
 
 ## 课后：生成准确的笔记
 

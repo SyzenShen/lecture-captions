@@ -128,7 +128,7 @@ Terms are swapped for a placeholder before translation and back afterwards; the 
 (多孔板（multi-well plates）) and the whole term is printed in dark red on the web page, so even a wrong guess can be traced back
 (`--brackets first`: bracket only the first time).
 A term that is hard to translate can be written `galvanometric mirror = -`: the sentence then shows just the English in brackets, （galvanometric mirror）. If the translator drops a placeholder, that sentence is translated without the glossary.
-Glossaries named `glossary/common_*.txt` are used for every course (basic biochemistry, say). See `glossary/example_biology.txt`; your own glossaries in `glossary/` are git-ignored. A larger offline model did not help: NLLB-200 (600M and 1.3B)
+Glossary files are re-read whenever they change, so you can add a term in the break and it applies to the next sentence. Glossaries named `glossary/common_*.txt` are used for every course (basic biochemistry, say). See `glossary/example_biology.txt`; your own glossaries in `glossary/` are git-ignored. A larger offline model did not help: NLLB-200 (600M and 1.3B)
 dropped characters, stopped in the middle of long sentences and used 7-12x the CPU of the current translator.
 
 ## After class: accurate notes

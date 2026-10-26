@@ -132,6 +132,35 @@ class Translator(unittest.TestCase):
         self.assertEqual(calls, ["Put it in ZorvaxA", "Put it in multi-well plates"])
 
 
+class Reload(unittest.TestCase):
+    def test_an_edited_glossary_file_is_picked_up_without_restarting(self):
+        import tempfile
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "g.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("alpha = 甲\n")
+            g = glossary.Glossary.load([path])
+            self.assertEqual(len(g.terms), 1)
+            time.sleep(0.02)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("alpha = 甲\nbeta = 乙\n~ gamma = beta\n")
+            os.utime(path, (time.time() + 5, time.time() + 5))       # make sure the timestamp differs
+            self.assertEqual(g.fix_english("a gamma"), "a beta")
+            self.assertEqual(len(g.terms), 2)
+
+    def test_a_missing_file_keeps_the_old_rules(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "g.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("alpha = 甲\n")
+            g = glossary.Glossary.load([path])
+            os.remove(path)
+            g.refresh()
+            self.assertEqual(len(g.terms), 1)
+
+
 class TranslationGuards(unittest.TestCase):
     def test_a_repeated_phrase_is_squashed(self):
         import live

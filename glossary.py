@@ -10,7 +10,9 @@ A glossary is a plain text file, one rule per line (UTF-8, '#' starts a comment)
 Without "!" the English follows the Chinese only the first time the term appears in a session.
 Terms match case-insensitively, a space also matches a hyphen, and a plural "s"/"es" is accepted.
 """
+import os
 import re
+import threading
 
 MARK_S, MARK_E = "\ue000", "\ue001"      # around a glossary term in the translation: the web page prints it in colour
 TAG = "Zorvax"     # a made-up proper noun: the offline translator copies it through unchanged, so it can be swapped back
@@ -28,10 +30,18 @@ def _pattern(term):
 
 
 class Glossary:
-    def __init__(self, lines=(), always=False):
+    def __init__(self, lines=(), always=False, paths=()):
         self.always = always   # show the English in brackets every time, not just the first
+        self.paths = list(paths)
+        self.mtimes = self._stamp()
         self.fixes = []        # (pattern, replacement English)
         self.terms = []        # (pattern, English term, Chinese or None = keep the English, always bracket)
+        self.seen = set()      # terms already shown with their English once (for always=False)
+        self.lock = threading.Lock()
+        self._parse(lines)
+
+    def _parse(self, lines):
+        fixes, terms = [], []
         for line in lines:
             line = line.split("#", 1)[0].strip()
             if "=" not in line:
@@ -40,27 +50,55 @@ class Glossary:
             if not left or not right:
                 continue
             if left.startswith("~"):
-                self.fixes.append((_pattern(left[1:]), right))
+                fixes.append((_pattern(left[1:]), right))
             else:
                 bang = right.endswith("!")
                 right = right.rstrip("!").strip()
-                self.terms.append((_pattern(left), left, None if right in ("-", "") else right, bang))
-        self.terms.sort(key=lambda t: -len(t[1]))      # longest first: "calcium indicator line" before "line"
-        self.seen = set()                              # terms already shown with their English once
+                terms.append((_pattern(left), left, None if right in ("-", "") else right, bang))
+        terms.sort(key=lambda t: -len(t[1]))           # longest first: "calcium indicator line" before "line"
+        self.fixes, self.terms = fixes, terms
 
-    @classmethod
-    def load(cls, paths, always=False):
+    def _stamp(self):
+        out = []
+        for p in self.paths:
+            try:
+                out.append(os.stat(p).st_mtime)
+            except OSError:
+                out.append(None)
+        return out
+
+    @staticmethod
+    def _read(paths):
         lines = []
         for p in paths:
             with open(p, encoding="utf-8") as f:
                 lines += f.read().splitlines()
-        return cls(lines, always)
+        return lines
+
+    def refresh(self):
+        """Pick up edits to the glossary files while the program runs (add a term in the break, it applies at once)."""
+        if not self.paths:
+            return
+        stamp = self._stamp()
+        if stamp == self.mtimes:
+            return
+        with self.lock:
+            self.mtimes = stamp
+            try:
+                self._parse(self._read(self.paths))
+            except (OSError, UnicodeDecodeError):
+                pass                                   # a half-saved file: keep the old rules until the next change
+
+    @classmethod
+    def load(cls, paths, always=False):
+        return cls(cls._read(paths), always, paths)
 
     def __bool__(self):
         return bool(self.fixes or self.terms)
 
     def fix_english(self, text):
         """Replace known recognition mistakes in the English text."""
+        self.refresh()
         for pat, right in self.fixes:
             text = pat.sub(lambda m, r=right: r + (m.group(1) or ""), text)
         return text
@@ -68,6 +106,7 @@ class Glossary:
     def protect(self, text):
         """Swap each glossary term for a placeholder before translation.
         Returns (text, {placeholder: (English as spoken, Chinese or None, always bracket)})."""
+        self.refresh()
         tags, spans = {}, []
         for pat, _, zh, bang in self.terms:
             for m in pat.finditer(text):
