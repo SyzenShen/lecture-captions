@@ -15,6 +15,7 @@ web page shows the result. Built by a non-native listener for a MacBook in the f
 - **Silero VAD** finds pauses, so it works on quiet recordings and in noisy rooms (a plain loudness threshold did not).
 - Saves the session audio and a running transcript (turn off with `--no-record`); press `s` for a Markdown file of the whole session.
 - **Questions are highlighted** (accent border) and the **three most recent are pinned** in a bar at the top, so you can see what is being discussed when the room starts talking. The Markdown notes end with a list of every question asked.
+- **Connectives in bold** (`b` toggles): but, because, so, therefore, if, for example ... are printed bold in the English, so the structure of a long sentence is easier to follow ("and"/"or" are left out: they are everywhere).
 - **Focus mode** (`f`): only the last three sentences, larger; click a sentence to open its Chinese. Read less, listen more; the full transcript is saved for after class.
 - Works on a recording too: `./run.sh --file lecture.mp3`.
 
@@ -52,6 +53,7 @@ A shell alias makes it shorter still: `alias cap='~/lecture-captions/run.sh'`.
 | `s` | save the session so far as Markdown (`notes/`, or `CAPTIONS_NOTES_DIR`) |
 | `c` | hide / show the Chinese |
 | `p` | pause / resume (the microphone is really closed while paused) |
+| `b` | connectives in bold on / off |
 | `f` | focus mode: last three sentences only, Chinese on click (`c` then shows/hides all of them) |
 
 Useful options (`./run.sh --help` for all):
@@ -125,7 +127,7 @@ calcium indicator line = 钙离子指示剂品系     # translate this term the 
 Terms are swapped for a placeholder before translation and back afterwards; the first time a term appears its English follows in brackets
 (多孔板（multi-well plates）), so even a wrong guess can be traced back (`--brackets always`: every time; `term = 中文 !`: always for that term).
 A term that is hard to translate can be written `galvanometric mirror = -`: the sentence then shows just the English in brackets, （galvanometric mirror）. If the translator drops a placeholder, that sentence is translated without the glossary.
-See `glossary/example_biology.txt`; your own glossaries in `glossary/` are git-ignored. A larger offline model did not help: NLLB-200 (600M and 1.3B)
+Glossaries named `glossary/common_*.txt` are used for every course (basic biochemistry, say). See `glossary/example_biology.txt`; your own glossaries in `glossary/` are git-ignored. A larger offline model did not help: NLLB-200 (600M and 1.3B)
 dropped characters, stopped in the middle of long sentences and used 7-12x the CPU of the current translator.
 
 ## After class: accurate notes

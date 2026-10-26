@@ -888,6 +888,25 @@ class SileroSegmenter(Segmenter):
 
 
 # ---------------------------------------------------------------- web UI
+# Words that show how an argument is built (contrast, cause, condition, example, sequence). The page prints them in bold so a
+# long sentence is easier to follow. "and"/"or" are left out on purpose: they are everywhere and would drown the rest.
+CONNECTIVES = (
+    "but", "however", "although", "though", "whereas", "while", "yet", "unlike", "instead", "otherwise", "despite",
+    "on the other hand", "in contrast", "by contrast", "nevertheless", "even though",
+    "because", "since", "so", "so that", "such that", "therefore", "thus", "hence", "consequently", "as a result", "that is why",
+    "if", "unless", "then", "in that case", "as long as", "provided that",
+    "for example", "for instance", "such as", "e.g.", "in other words", "that is", "namely", "i.e.",
+    "also", "moreover", "furthermore", "in addition", "additionally",
+    "first", "second", "third", "finally", "next", "afterwards", "first of all", "in the end", "in summary", "to summarize",
+)
+
+
+def connective_pattern():
+    """Regex source (works in Python and JavaScript) matching any CONNECTIVES entry as whole words, longest first."""
+    parts = sorted(CONNECTIVES, key=len, reverse=True)
+    return r"(?<![\w.])(?:" + "|".join(re.escape(x).replace("\\ ", r"\s+") for x in parts) + r")(?![\w])"
+
+
 PAGE = r"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>课堂字幕</title><style>
 :root{--bg:#fafaf8;--fg:#1a1a1a;--dim:#8a8a85;--bar:#ecece8;--btn:#fff;--bd:#cfcfc8;--acc:#1a56db;--ok:#177245}
@@ -908,36 +927,38 @@ body.focus .zh{display:none}body.focus .e.open .zh,body.focus.zhall .zh{display:
 #qbar{padding:8px 16px;background:var(--bar);border-bottom:1px solid var(--bd);font-size:15px;line-height:1.35}
 .qt{color:var(--dim);font-size:12px;letter-spacing:.04em}#qlist div{margin-top:3px;cursor:pointer}#qlist div:first-child{font-weight:600}
 #qlist .t{color:var(--dim);font-size:12px;margin-right:.5em;font-variant-numeric:tabular-nums}.e.flash{background:rgba(26,86,219,.14)}
-body.paused main{opacity:.45}#pz.on{background:#d97706;border-color:#d97706;color:#fff}
+b.cn{font-weight:700}body.nocn b.cn{font-weight:inherit}body.paused main{opacity:.45}#pz.on{background:#d97706;border-color:#d97706;color:#fff}
 </style></head><body>
-<div id="top"><header><button id="pz">⏸ 暂停</button><button id="tz">隐藏中文</button><button id="fz">专注</button><button id="sv">保存 .md</button><button id="m">A−</button><button id="p">A+</button>
-<span class="hint">快捷键：p 暂停 · c 隐藏/显示中文 · f 专注 · s 保存</span><span id="msg"></span></header>
+<div id="top"><header><button id="pz">⏸ 暂停</button><button id="tz">隐藏中文</button><button id="fz">专注</button><button id="cn">连接词</button><button id="sv">保存 .md</button><button id="m">A−</button><button id="p">A+</button>
+<span class="hint">快捷键：p 暂停 · c 隐藏/显示中文 · f 专注 · b 连接词加粗 · s 保存</span><span id="msg"></span></header>
 <div id="qbar" hidden><span class="qt">最近的问题</span><div id="qlist"></div></div></div>
 <main id="log"><div id="partial"></div></main>
 <script>
 const log=document.getElementById("log"),part=document.getElementById("partial"),tz=document.getElementById("tz"),msg=document.getElementById("msg");
-const fzb=document.getElementById("fz"),FOCUS_N=3;
-let fs=26;try{fs=+localStorage.fs||26;if(localStorage.nozh==="1")document.body.classList.add("nozh");if(localStorage.focus==="1")document.body.classList.add("focus")}catch(e){}
-function paint(){document.documentElement.style.setProperty("--fs",fs+"px");tz.textContent=document.body.classList.contains("nozh")?"显示中文":"隐藏中文";tz.classList.toggle("on",document.body.classList.contains("nozh"));
+const fzb=document.getElementById("fz"),cnb=document.getElementById("cn"),FOCUS_N=3,CONN=new RegExp(__CONN__,"gi");
+let fs=26;try{fs=+localStorage.fs||26;if(localStorage.nozh==="1")document.body.classList.add("nozh");if(localStorage.focus==="1")document.body.classList.add("focus");if(localStorage.nocn==="1")document.body.classList.add("nocn")}catch(e){}
+function paint(){document.documentElement.style.setProperty("--fs",fs+"px");tz.textContent=document.body.classList.contains("nozh")?"显示中文":"隐藏中文";tz.classList.toggle("on",document.body.classList.contains("nozh"));cnb.classList.toggle("on",!document.body.classList.contains("nocn"));
  const f=document.body.classList.contains("focus"),z=document.body.classList.contains("zhall");fzb.textContent=f?"退出专注":"专注";fzb.classList.toggle("on",f);
  if(f){tz.textContent=z?"收起中文":"显示全部中文";tz.classList.toggle("on",z)}}
 function layout(){const all=[...log.querySelectorAll(".e")];all.forEach((e,i)=>e.classList.toggle("vis",i>=all.length-FOCUS_N))}
 function setFocus(on){document.body.classList.toggle("focus",on);if(!on)document.body.classList.remove("zhall");try{localStorage.focus=on?"1":"0"}catch(e){}layout();paint();scrollTo(0,document.body.scrollHeight)}
 function toggle(){if(document.body.classList.contains("focus")){document.body.classList.toggle("zhall");paint();return}document.body.classList.toggle("nozh");try{localStorage.nozh=document.body.classList.contains("nozh")?"1":"0"}catch(e){}paint()}
+function toggleCn(){document.body.classList.toggle("nocn");try{localStorage.nocn=document.body.classList.contains("nocn")?"1":"0"}catch(e){}paint()}
+function marked(text){const f=document.createDocumentFragment();let i=0;CONN.lastIndex=0;for(let m;(m=CONN.exec(text));){if(m.index>i)f.append(text.slice(i,m.index));const b=document.createElement("b");b.className="cn";b.textContent=m[0];f.append(b);i=m.index+m[0].length}if(i<text.length)f.append(text.slice(i));return f}
 function size(d){fs=Math.min(60,Math.max(16,fs+d));try{localStorage.fs=fs}catch(e){}paint()}
 function flash(t){msg.textContent=t;setTimeout(()=>msg.textContent="",5000)}
 async function pause(){try{await fetch("/pause",{method:"POST"})}catch(e){flash("操作失败")}}
 function setPaused(p){document.body.classList.toggle("paused",p);const b=document.getElementById("pz");b.textContent=p?"▶ 继续":"⏸ 暂停";b.classList.toggle("on",p);
  document.title=p?"⏸ 课堂字幕（已暂停）":"课堂字幕";if(p)part.textContent=""}
 async function save(){try{const r=await (await fetch("/save",{method:"POST"})).json();flash("✓ 已保存 "+r.n+" 句 → "+r.path)}catch(e){flash("保存失败")}}
-tz.onclick=toggle;fzb.onclick=()=>setFocus(!document.body.classList.contains("focus"));log.addEventListener("click",ev=>{if(!document.body.classList.contains("focus"))return;const e=ev.target.closest(".e");if(e)e.classList.toggle("open")});document.getElementById("pz").onclick=pause;document.getElementById("sv").onclick=save;document.getElementById("m").onclick=()=>size(-2);document.getElementById("p").onclick=()=>size(2);
-addEventListener("keydown",e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;if(e.key==="c")toggle();if(e.key==="f")setFocus(!document.body.classList.contains("focus"));if(e.key==="p")pause();if(e.key==="s")save()});
+tz.onclick=toggle;cnb.onclick=toggleCn;fzb.onclick=()=>setFocus(!document.body.classList.contains("focus"));log.addEventListener("click",ev=>{if(!document.body.classList.contains("focus"))return;const e=ev.target.closest(".e");if(e)e.classList.toggle("open")});document.getElementById("pz").onclick=pause;document.getElementById("sv").onclick=save;document.getElementById("m").onclick=()=>size(-2);document.getElementById("p").onclick=()=>size(2);
+addEventListener("keydown",e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;if(e.key==="c")toggle();if(e.key==="b")toggleCn();if(e.key==="f")setFocus(!document.body.classList.contains("focus"));if(e.key==="p")pause();if(e.key==="s")save()});
 const qs=[];
 function renderQ(){const bar=document.getElementById("qbar"),box=document.getElementById("qlist");bar.hidden=!qs.length;box.textContent="";
  qs.slice(-3).reverse().forEach(x=>{const r=document.createElement("div"),t=document.createElement("span");t.className="t";t.textContent=x.ts;r.append(t,document.createTextNode(x.q));
   r.onclick=()=>{if(document.body.classList.contains("focus"))setFocus(false);x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
 function makeEntry(ev){const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
- const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,document.createTextNode(ev.en));
+ const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,marked(ev.en));
  d.dataset.id=ev.id;d.dataset.q=ev.q||"";const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");z.textContent=ev.zh||"…";d.append(z);return d}
 function rebuildQ(){qs.length=0;document.querySelectorAll(".e.q").forEach(el=>qs.push({ts:el.querySelector(".ts").textContent,q:el.dataset.q,el}));renderQ()}
 function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=makeEntry(ev);
@@ -954,6 +975,8 @@ def start_web(out, port):
     import json
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+    page = PAGE.replace("__CONN__", json.dumps(connective_pattern()))
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -968,7 +991,7 @@ def start_web(out, port):
 
         def do_GET(self):
             if self.path == "/":
-                return self._send(200, PAGE, "text/html; charset=utf-8")
+                return self._send(200, page, "text/html; charset=utf-8")
             if self.path != "/events":
                 return self._send(404, "not found", "text/plain")
             self.send_response(200)
@@ -1149,6 +1172,8 @@ def main():
     a = ap.parse_args()
     a.web = not a.no_web and (a.web or not a.file)
     all_courses = courses.scan(os.path.join(HERE, "prompts"), os.path.join(HERE, "glossary"))
+    shared = all_courses.pop("common", {"glossaries": []})["glossaries"]     # glossary/common_*.txt: for every course
+    a.glossary = list(a.glossary) + shared
     if a.list_courses:
         for key in sorted(all_courses):
             print("  " + courses.describe(key, all_courses[key]))
