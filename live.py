@@ -29,7 +29,7 @@ from datetime import datetime
 import numpy as np
 
 import courses
-from glossary import Glossary, GlossaryTranslator, strip_marks
+from glossary import MARK_S, Glossary, GlossaryTranslator, strip_marks, tidy_zh
 from questions import extract_question
 
 SR = 16000
@@ -51,7 +51,10 @@ def clean_zh(zh, en):
     zh = LOOP.sub(lambda m: m.group(1) * 2, zh)
     zh = PHRASE_LOOP.sub(r"\1", zh)
     zh = re.sub(r"\s*[(（]英语[)）]", "", zh)       # the offline model tags pure-number sentences with "(英语)"
+    zh = tidy_zh(zh)
     limit = int(len(en) * 1.8) + 12
+    if MARK_S in zh:                  # glossary terms carry their English in brackets: the length check would cut real translations
+        return zh
     return zh if len(zh) <= limit else zh[:limit].rstrip("，。、 ") + "…"
 
 class NoTranslator:
@@ -934,7 +937,7 @@ button:hover{border-color:var(--acc)}button.on{background:var(--acc);border-colo
 #msg{margin-left:auto;color:var(--ok);font-size:14px}.hint{color:var(--dim);font-size:13px}
 main{padding:12px 16px 90px;max-width:1100px;margin:0 auto;font-size:var(--fs,26px);line-height:1.45}
 .e{margin:0 0 .9em}.ts{color:var(--dim);font-size:.5em;margin-right:.6em;font-variant-numeric:tabular-nums}
-.zh{font-weight:400;margin-top:.15em}.zh b.cn{font-weight:800}.term{color:var(--term)}.zh.wait{color:var(--dim);font-weight:400}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
+.zh{font-weight:400;margin-top:.15em}.zh b.cn{font-weight:800}.term{color:var(--term);margin:0 .12em}.zh.wait{color:var(--dim);font-weight:400}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
 #partial{color:var(--fg);opacity:.62}   /* the draft: readable, but visibly not final */
 .e.q{border-left:4px solid var(--acc);padding-left:.55em}
 /* focus mode: only the last three sentences, bigger; the Chinese opens per sentence on click */

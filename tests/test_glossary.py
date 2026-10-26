@@ -110,7 +110,7 @@ class Translator(unittest.TestCase):
             return text.replace("Put it in", "放入")
 
         t = glossary.GlossaryTranslator(base, make())
-        self.assertEqual(P(t("Put it in multi-well plates")), "放入 多孔板（multi-well plates）")
+        self.assertEqual(P(t("Put it in multi-well plates")), "放入多孔板（multi-well plates）")
         self.assertEqual(seen, ["Put it in ZorvaxA"])
 
     def test_a_sentence_that_is_only_the_term_is_not_sent_to_the_translator(self):
@@ -159,6 +159,28 @@ class Reload(unittest.TestCase):
             os.remove(path)
             g.refresh()
             self.assertEqual(len(g.terms), 1)
+
+
+class Tidy(unittest.TestCase):
+    def test_spaces_between_chinese_and_punctuation_go(self):
+        self.assertEqual(glossary.tidy_zh("他们越相似， 世界上的数量 ，对。"), "他们越相似，世界上的数量，对。")
+
+    def test_space_next_to_a_latin_word_stays(self):
+        self.assertEqual(glossary.tidy_zh("在准 Prime 指纹"), "在准 Prime 指纹")
+
+    def test_terms_touch_the_text_around_them(self):
+        t = "分享的" + glossary.MARK_S + "短序列片段（k-mers）" + glossary.MARK_E + " 的数量"
+        self.assertEqual(glossary.tidy_zh(t), "分享的" + glossary.MARK_S + "短序列片段（k-mers）" + glossary.MARK_E + "的数量")
+
+    def test_a_chinese_gloss_in_brackets_is_not_doubled(self):
+        g = glossary.Glossary(["Swiss Army knife = 万能工具（瑞士军刀）"])
+        _, tags = g.protect("a Swiss Army knife")
+        self.assertEqual(glossary.strip_marks(g.restore("一把ZorvaxA", tags)), "一把万能工具（瑞士军刀）")
+
+    def test_long_glossary_translations_are_not_cut_short(self):
+        import live
+        zh = "这是" + glossary.MARK_S + "半胱氨酸（cysteine）" + glossary.MARK_E + "，" + "很长的一句话" * 6
+        self.assertEqual(live.clean_zh(zh, "Cysteine."), zh)
 
 
 class TranslationGuards(unittest.TestCase):

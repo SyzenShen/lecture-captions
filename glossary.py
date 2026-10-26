@@ -23,6 +23,17 @@ def strip_marks(text):
     return text.replace(MARK_S, "").replace(MARK_E, "")
 
 
+_CJK_END = "\u4e00-\u9fff，。！？；：、）”\ue001"     # a character after which a following space is not wanted
+_CJK_START = "\u4e00-\u9fff，。！？；：、（“\ue000"
+_GAP = re.compile("(?<=[" + _CJK_END + "])[ \t]+(?=[" + _CJK_START + "])|[ \t]+(?=[，。！？；：、）”])|(?<=[（“])[ \t]+")
+
+
+def tidy_zh(text):
+    """Chinese text from the translator has spaces after commas and around terms; remove the ones between Chinese
+    characters, punctuation and glossary terms (a space between Chinese and a Latin word stays)."""
+    return _GAP.sub("", text)
+
+
 def _pattern(term):
     words = re.split(r"[\s\-]+", term.strip())
     body = r"[\s\-]+".join(re.escape(w) for w in words if w)
@@ -134,6 +145,8 @@ class Glossary:
             pat = re.compile(re.escape(TAG) + r"\s?" + re.escape(tag[len(TAG):]), re.I)
             if chinese is None:                          # hard to translate: the English in brackets is the term
                 shown = f"（{english}）"
+            elif "（" in chinese or "(" in chinese:         # the glossary author already wrote the English / a gloss
+                shown = chinese
             elif bang or self.always or chinese not in self.seen:
                 self.seen.add(chinese)
                 shown = f"{chinese}（{english.lower()}）"
@@ -142,7 +155,7 @@ class Glossary:
             shown = MARK_S + shown + MARK_E
             zh = pat.sub(lambda _m, s=shown: s, zh, count=1)
             zh = pat.sub(lambda _m, s=shown: s, zh)
-        return re.sub(r"\s+([。，！？；：])", r"\1", zh)
+        return tidy_zh(zh)
 
 
 class GlossaryTranslator:
