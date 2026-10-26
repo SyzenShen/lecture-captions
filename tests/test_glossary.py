@@ -5,6 +5,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import glossary  # noqa: E402
 
+P = glossary.strip_marks
+
 RULES = """
 # comment line
 calcium indicator line = 钙离子指示剂品系   # trailing comment
@@ -56,30 +58,37 @@ class Restore(unittest.TestCase):
         g = make()
         _, tags = g.protect("multi-well plates")
         first = g.restore("放入ZorvaxA。", tags)
-        self.assertEqual(first, "放入多孔板（multi-well plates）。")
+        self.assertEqual(P(first), "放入多孔板（multi-well plates）。")
         second = g.restore("再放入ZorvaxA。", tags)
-        self.assertEqual(second, "再放入多孔板。")
+        self.assertEqual(P(second), "再放入多孔板。")
 
     def test_a_term_without_a_translation_is_shown_as_its_english_in_brackets(self):
         g = make()
         _, tags = g.protect("a newbie tracker here")
-        self.assertEqual(g.restore("这里有ZorvaxA。", tags), "这里有（newbie tracker）。")
-        self.assertEqual(g.restore("这里有ZorvaxA。", tags), "这里有（newbie tracker）。")     # every time
+        self.assertEqual(P(g.restore("这里有ZorvaxA。", tags)), "这里有（newbie tracker）。")
+        self.assertEqual(P(g.restore("这里有ZorvaxA。", tags)), "这里有（newbie tracker）。")     # every time
 
     def test_bang_rule_and_the_always_option_bracket_every_time(self):
         g = make()
         _, tags = g.protect("the signal")
-        self.assertEqual(g.restore("ZorvaxA强。", tags), "信号（signal）强。")
-        self.assertEqual(g.restore("ZorvaxA强。", tags), "信号（signal）强。")
+        self.assertEqual(P(g.restore("ZorvaxA强。", tags)), "信号（signal）强。")
+        self.assertEqual(P(g.restore("ZorvaxA强。", tags)), "信号（signal）强。")
         g2 = glossary.Glossary(RULES.splitlines(), always=True)
         _, tags = g2.protect("multi-well plates")
         g2.restore("ZorvaxA", tags)
-        self.assertEqual(g2.restore("ZorvaxA", tags), "多孔板（multi-well plates）")
+        self.assertEqual(P(g2.restore("ZorvaxA", tags)), "多孔板（multi-well plates）")
+
+    def test_terms_are_wrapped_in_markers_for_the_web_page(self):
+        g = make()
+        _, tags = g.protect("multi-well plates")
+        out = g.restore("放入ZorvaxA。", tags)
+        self.assertEqual(out, "放入" + glossary.MARK_S + "多孔板（multi-well plates）" + glossary.MARK_E + "。")
+        self.assertEqual(P(out), "放入多孔板（multi-well plates）。")
 
     def test_no_stray_space_before_chinese_punctuation(self):
         g = make()
         _, tags = g.protect("multi-well plates.")
-        self.assertEqual(g.restore("放入ZorvaxA 。", tags), "放入多孔板（multi-well plates）。")
+        self.assertEqual(P(g.restore("放入ZorvaxA 。", tags)), "放入多孔板（multi-well plates）。")
 
     def test_a_lost_placeholder_is_reported(self):
         g = make()
@@ -101,7 +110,7 @@ class Translator(unittest.TestCase):
             return text.replace("Put it in", "放入")
 
         t = glossary.GlossaryTranslator(base, make())
-        self.assertEqual(t("Put it in multi-well plates"), "放入 多孔板（multi-well plates）")
+        self.assertEqual(P(t("Put it in multi-well plates")), "放入 多孔板（multi-well plates）")
         self.assertEqual(seen, ["Put it in ZorvaxA"])
 
     def test_a_sentence_that_is_only_the_term_is_not_sent_to_the_translator(self):
@@ -109,7 +118,7 @@ class Translator(unittest.TestCase):
             raise AssertionError("must not be called")
 
         t = glossary.GlossaryTranslator(base, make())
-        self.assertEqual(t("Multi-well plates."), "多孔板（multi-well plates）。")
+        self.assertEqual(P(t("Multi-well plates.")), "多孔板（multi-well plates）。")
 
     def test_falls_back_to_plain_translation_when_a_placeholder_is_lost(self):
         calls = []
@@ -119,7 +128,7 @@ class Translator(unittest.TestCase):
             return "译文"
 
         t = glossary.GlossaryTranslator(base, make())
-        self.assertEqual(t("Put it in multi-well plates"), "译文")
+        self.assertEqual(P(t("Put it in multi-well plates")), "译文")
         self.assertEqual(calls, ["Put it in ZorvaxA", "Put it in multi-well plates"])
 
 
@@ -136,8 +145,8 @@ class TranslationGuards(unittest.TestCase):
     def test_interjections_are_not_translated(self):
         import live
         t = live.ArgosTranslator.__new__(live.ArgosTranslator)      # no model needed: it returns before using it
-        self.assertEqual(t("Ooh!"), "")
-        self.assertEqual(t("Hmm."), "")
+        self.assertEqual(P(t("Ooh!")), "")
+        self.assertEqual(P(t("Hmm.")), "")
 
 
 if __name__ == "__main__":

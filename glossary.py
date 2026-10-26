@@ -12,7 +12,13 @@ Terms match case-insensitively, a space also matches a hyphen, and a plural "s"/
 """
 import re
 
+MARK_S, MARK_E = "\ue000", "\ue001"      # around a glossary term in the translation: the web page prints it in colour
 TAG = "Zorvax"     # a made-up proper noun: the offline translator copies it through unchanged, so it can be swapped back
+
+
+def strip_marks(text):
+    """The translation as plain text (terminal, files, notes): without the markers that colour terms on the web page."""
+    return text.replace(MARK_S, "").replace(MARK_E, "")
 
 
 def _pattern(term):
@@ -94,8 +100,9 @@ class Glossary:
                 shown = f"{chinese}（{english.lower()}）"
             else:
                 shown = chinese
+            shown = MARK_S + shown + MARK_E
             zh = pat.sub(lambda _m, s=shown: s, zh, count=1)
-            zh = pat.sub(shown, zh)
+            zh = pat.sub(lambda _m, s=shown: s, zh)
         return re.sub(r"\s+([。，！？；：])", r"\1", zh)
 
 

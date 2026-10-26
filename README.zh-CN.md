@@ -15,7 +15,7 @@
 - 用 **Silero 语音检测**判断停顿，安静的录音和嘈杂的教室都能用（纯音量门限不行）。
 - 保存本次的录音和逐句记录（`--no-record` 可关闭）；按 `s` 导出整节课的 Markdown。
 - **提问会被高亮**，**最近 3 个问题置顶**在页面顶部：老师抛出问题、教室开始讨论时，瞥一眼就知道在聊什么。Markdown 笔记末尾会列出这节课所有的提问。
-- **连接词加粗**（`b` 开关）：but、because、so、therefore、if、for example 等在英文里加粗，长句的结构更容易看清（不含 and / or，它们太多会淹没其他词）。
+- **连接词加粗**（`b` 开关）：but、because、so、therefore、if、for example 等在英文里加粗，长句的结构更容易看清（不含 and / or，它们太多会淹没其他词）。中文用常规字重，所以中文的连词（但是、因为、所以、如果……）也能以粗体突出。
 - **专注模式**（`f`）：只显示最近 3 句，字号放大；点一句才显示它的中文（`c` 显示/隐藏全部）。少看屏幕、多听老师，完整记录留到课后。
 - 也能处理录音文件：`./run.sh --file lecture.mp3`。
 
@@ -96,7 +96,7 @@ calcium indicator line = 钙离子指示剂品系     # 这个术语按我写的
 ./run.sh my_course                  # 自动用 glossary/my_*.txt；也可以 --glossary 文件（可以给多个）
 ```
 
-翻译前先把术语换成占位符，翻译后再换回；术语第一次出现时后面会带上英文括号（多孔板（multi-well plates）），这样即使猜错了也能对回原文（`--brackets always` 每次都带；`term = 中文 !` 让某个术语每次都带）。不好翻译的术语可以写成 `galvanometric mirror = -`，这样这句话里就只显示括号里的英文：（galvanometric mirror）。如果翻译器丢掉了占位符，这一句就不用术语表重新翻译。名为 `glossary/common_*.txt` 的术语表对所有课程生效（比如基础生化）。示例见 `glossary/example_biology.txt`；你自己放在 `glossary/` 里的术语表不会被提交。更大的离线模型没有帮助：NLLB-200（600M 和 1.3B）会丢字、长句翻到一半就停，CPU 是现在翻译器的 7–12 倍。
+翻译前先把术语换成占位符，翻译后再换回；术语后面每次都会带上英文括号（多孔板（multi-well plates）），网页上整个术语显示为深红色，这样即使猜错了也能对回原文（`--brackets first` 只在第一次出现时带括号）。不好翻译的术语可以写成 `galvanometric mirror = -`，这样这句话里就只显示括号里的英文：（galvanometric mirror）。如果翻译器丢掉了占位符，这一句就不用术语表重新翻译。名为 `glossary/common_*.txt` 的术语表对所有课程生效（比如基础生化）。示例见 `glossary/example_biology.txt`；你自己放在 `glossary/` 里的术语表不会被提交。更大的离线模型没有帮助：NLLB-200（600M 和 1.3B）会丢字、长句翻到一半就停，CPU 是现在翻译器的 7–12 倍。
 
 ## 课后：生成准确的笔记
 

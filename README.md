@@ -15,7 +15,7 @@ web page shows the result. Built by a non-native listener for a MacBook in the f
 - **Silero VAD** finds pauses, so it works on quiet recordings and in noisy rooms (a plain loudness threshold did not).
 - Saves the session audio and a running transcript (turn off with `--no-record`); press `s` for a Markdown file of the whole session.
 - **Questions are highlighted** (accent border) and the **three most recent are pinned** in a bar at the top, so you can see what is being discussed when the room starts talking. The Markdown notes end with a list of every question asked.
-- **Connectives in bold** (`b` toggles): but, because, so, therefore, if, for example ... are printed bold in the English, so the structure of a long sentence is easier to follow ("and"/"or" are left out: they are everywhere).
+- **Connectives in bold** (`b` toggles): but, because, so, therefore, if, for example ... are printed bold in the English, so the structure of a long sentence is easier to follow ("and"/"or" are left out: they are everywhere). The Chinese line is in regular weight so its connectives (但是, 因为, 所以, 如果 ...) stand out in bold too.
 - **Focus mode** (`f`): only the last three sentences, larger; click a sentence to open its Chinese. Read less, listen more; the full transcript is saved for after class.
 - Works on a recording too: `./run.sh --file lecture.mp3`.
 
@@ -124,8 +124,9 @@ calcium indicator line = 钙离子指示剂品系     # translate this term the 
 ./run.sh my_course                  # picks glossary/my_*.txt automatically; or --glossary FILE (may be given more than once)
 ```
 
-Terms are swapped for a placeholder before translation and back afterwards; the first time a term appears its English follows in brackets
-(多孔板（multi-well plates）), so even a wrong guess can be traced back (`--brackets always`: every time; `term = 中文 !`: always for that term).
+Terms are swapped for a placeholder before translation and back afterwards; the English follows every time in brackets
+(多孔板（multi-well plates）) and the whole term is printed in dark red on the web page, so even a wrong guess can be traced back
+(`--brackets first`: bracket only the first time).
 A term that is hard to translate can be written `galvanometric mirror = -`: the sentence then shows just the English in brackets, （galvanometric mirror）. If the translator drops a placeholder, that sentence is translated without the glossary.
 Glossaries named `glossary/common_*.txt` are used for every course (basic biochemistry, say). See `glossary/example_biology.txt`; your own glossaries in `glossary/` are git-ignored. A larger offline model did not help: NLLB-200 (600M and 1.3B)
 dropped characters, stopped in the middle of long sentences and used 7-12x the CPU of the current translator.

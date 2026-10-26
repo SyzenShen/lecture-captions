@@ -29,7 +29,7 @@ from datetime import datetime
 import numpy as np
 
 import courses
-from glossary import Glossary, GlossaryTranslator
+from glossary import Glossary, GlossaryTranslator, strip_marks
 from questions import extract_question
 
 SR = 16000
@@ -153,7 +153,7 @@ def render_markdown(entries, started, topic="", saved_at=None):
     for e in entries:
         lines.append(f"**{e['ts']}** {e['en']}  ")
         if e["zh"]:
-            lines.append(e["zh"])
+            lines.append(strip_marks(e["zh"]))
         lines.append("")
     asked = [(e["ts"], e["q"]) for e in entries if e["q"]]
     if asked:                                        # a review list of what the lecturer asked
@@ -212,11 +212,11 @@ class Output:
             self.broadcast({"type": "final", **entry})
         print(f"\n\033[90m{ts}\033[0m  {en}")
         if zh and self.show_zh:
-            print(f"          \033[1m{zh}\033[0m", flush=True)   # bold, default (black) colour
+            print(f"          \033[1m{strip_marks(zh)}\033[0m", flush=True)   # bold, default (black) colour
         self.printed_id = sid
         self.f.write(f"[{ts}] {en}\n")
         if zh:
-            self.f.write(f"         {zh}\n")
+            self.f.write(f"         {strip_marks(zh)}\n")
         self.f.flush()
         return sid
 
@@ -229,6 +229,7 @@ class Output:
             entry["zh"] = zh
             en = entry["en"]
             self.broadcast({"type": "zh", "id": sid, "zh": zh})
+        zh = strip_marks(zh)              # the colour markers are for the web page only
         if self.show_zh:
             self._clear_partial()
             lead = "          " if self.printed_id == sid else f"          \033[90m↳ {en[:28]}…\033[0m "
@@ -901,6 +902,21 @@ CONNECTIVES = (
 )
 
 
+# The same for the Chinese line. The first group cannot be mistaken for part of another word; the second group is only a
+# connective at the start of a clause ("那么多" and "最后一个" are not).
+CONNECTIVES_ZH = ("但是", "但", "然而", "不过", "虽然", "尽管", "因为", "由于", "所以", "因此", "于是", "从而", "如果", "假如", "除非", "否则",
+                  "例如", "比如", "也就是说", "换句话说", "此外", "而且", "总之", "综上所述", "即使", "只要", "无论")
+CONNECTIVES_ZH_CLAUSE = ("那么", "然后", "同时", "另外", "首先", "其次", "最后", "接着", "还有", "同样")
+
+
+def connective_pattern_zh():
+    """Regex source for Chinese connectives (Python and JavaScript). "但" alone only counts at the start of a clause."""
+    free = sorted((x for x in CONNECTIVES_ZH if x != "但"), key=len, reverse=True)
+    clause = sorted(CONNECTIVES_ZH_CLAUSE + ("但",), key=len, reverse=True)
+    start = r"(?<![\u4e00-\u9fff])"
+    return "(?:" + "|".join(free) + ")|" + start + "(?:" + "|".join(clause) + ")"
+
+
 def connective_pattern():
     """Regex source (works in Python and JavaScript) matching any CONNECTIVES entry as whole words, longest first."""
     parts = sorted(CONNECTIVES, key=len, reverse=True)
@@ -909,8 +925,8 @@ def connective_pattern():
 
 PAGE = r"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>课堂字幕</title><style>
-:root{--bg:#fafaf8;--fg:#1a1a1a;--dim:#8a8a85;--bar:#ecece8;--btn:#fff;--bd:#cfcfc8;--acc:#1a56db;--ok:#177245}
-@media(prefers-color-scheme:dark){:root{--bg:#18181a;--fg:#f2f2ee;--dim:#8d8d96;--bar:#242428;--btn:#2e2e33;--bd:#45454c;--acc:#7aa7ff;--ok:#5fd08f}}
+:root{--term:#8b1a1a;--bg:#fafaf8;--fg:#1a1a1a;--dim:#8a8a85;--bar:#ecece8;--btn:#fff;--bd:#cfcfc8;--acc:#1a56db;--ok:#177245}
+@media(prefers-color-scheme:dark){:root{--term:#ff9a9a;--bg:#18181a;--fg:#f2f2ee;--dim:#8d8d96;--bar:#242428;--btn:#2e2e33;--bd:#45454c;--acc:#7aa7ff;--ok:#5fd08f}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"PingFang SC",system-ui,sans-serif}
 #top{position:sticky;top:0;z-index:2}header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--bar);border-bottom:1px solid var(--bd)}
 button{font:inherit;font-size:15px;padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--btn);color:var(--fg);cursor:pointer}
@@ -918,7 +934,7 @@ button:hover{border-color:var(--acc)}button.on{background:var(--acc);border-colo
 #msg{margin-left:auto;color:var(--ok);font-size:14px}.hint{color:var(--dim);font-size:13px}
 main{padding:12px 16px 90px;max-width:1100px;margin:0 auto;font-size:var(--fs,26px);line-height:1.45}
 .e{margin:0 0 .9em}.ts{color:var(--dim);font-size:.5em;margin-right:.6em;font-variant-numeric:tabular-nums}
-.zh{font-weight:700;margin-top:.15em}.zh.wait{color:var(--dim);font-weight:400}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
+.zh{font-weight:400;margin-top:.15em}.zh b.cn{font-weight:800}.term{color:var(--term)}.zh.wait{color:var(--dim);font-weight:400}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
 #partial{color:var(--fg);opacity:.62}   /* the draft: readable, but visibly not final */
 .e.q{border-left:4px solid var(--acc);padding-left:.55em}
 /* focus mode: only the last three sentences, bigger; the Chinese opens per sentence on click */
@@ -935,7 +951,7 @@ b.cn{font-weight:700}body.nocn b.cn{font-weight:inherit}body.paused main{opacity
 <main id="log"><div id="partial"></div></main>
 <script>
 const log=document.getElementById("log"),part=document.getElementById("partial"),tz=document.getElementById("tz"),msg=document.getElementById("msg");
-const fzb=document.getElementById("fz"),cnb=document.getElementById("cn"),FOCUS_N=3,CONN=new RegExp(__CONN__,"gi");
+const fzb=document.getElementById("fz"),cnb=document.getElementById("cn"),FOCUS_N=3,CONN=new RegExp(__CONN__,"gi"),CONNZH=new RegExp(__CONNZH__,"g");
 let fs=26;try{fs=+localStorage.fs||26;if(localStorage.nozh==="1")document.body.classList.add("nozh");if(localStorage.focus==="1")document.body.classList.add("focus");if(localStorage.nocn==="1")document.body.classList.add("nocn")}catch(e){}
 function paint(){document.documentElement.style.setProperty("--fs",fs+"px");tz.textContent=document.body.classList.contains("nozh")?"显示中文":"隐藏中文";tz.classList.toggle("on",document.body.classList.contains("nozh"));cnb.classList.toggle("on",!document.body.classList.contains("nocn"));
  const f=document.body.classList.contains("focus"),z=document.body.classList.contains("zhall");fzb.textContent=f?"退出专注":"专注";fzb.classList.toggle("on",f);
@@ -945,6 +961,8 @@ function setFocus(on){document.body.classList.toggle("focus",on);if(!on)document
 function toggle(){if(document.body.classList.contains("focus")){document.body.classList.toggle("zhall");paint();return}document.body.classList.toggle("nozh");try{localStorage.nozh=document.body.classList.contains("nozh")?"1":"0"}catch(e){}paint()}
 function toggleCn(){document.body.classList.toggle("nocn");try{localStorage.nocn=document.body.classList.contains("nocn")?"1":"0"}catch(e){}paint()}
 function marked(text){const f=document.createDocumentFragment();let i=0;CONN.lastIndex=0;for(let m;(m=CONN.exec(text));){if(m.index>i)f.append(text.slice(i,m.index));const b=document.createElement("b");b.className="cn";b.textContent=m[0];f.append(b);i=m.index+m[0].length}if(i<text.length)f.append(text.slice(i));return f}
+function boldZh(text){const f=document.createDocumentFragment();let i=0;CONNZH.lastIndex=0;for(let m;(m=CONNZH.exec(text));){if(m.index>i)f.append(text.slice(i,m.index));const b=document.createElement("b");b.className="cn";b.textContent=m[0];f.append(b);i=m.index+m[0].length}if(i<text.length)f.append(text.slice(i));return f}
+function fillZh(el,text){el.textContent="";text.split(/(\ue000[^\ue001]*\ue001)/).forEach(p=>{if(p.startsWith("\ue000")){const s=document.createElement("span");s.className="term";s.append(boldZh(p.slice(1,-1)));el.append(s)}else if(p)el.append(boldZh(p))})}
 function size(d){fs=Math.min(60,Math.max(16,fs+d));try{localStorage.fs=fs}catch(e){}paint()}
 function flash(t){msg.textContent=t;setTimeout(()=>msg.textContent="",5000)}
 async function pause(){try{await fetch("/pause",{method:"POST"})}catch(e){flash("操作失败")}}
@@ -959,14 +977,14 @@ function renderQ(){const bar=document.getElementById("qbar"),box=document.getEle
   r.onclick=()=>{if(document.body.classList.contains("focus"))setFocus(false);x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
 function makeEntry(ev){const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
  const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,marked(ev.en));
- d.dataset.id=ev.id;d.dataset.q=ev.q||"";const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");z.textContent=ev.zh||"…";d.append(z);return d}
+ d.dataset.id=ev.id;d.dataset.q=ev.q||"";const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");if(ev.zh)fillZh(z,ev.zh);else z.textContent="…";d.append(z);return d}
 function rebuildQ(){qs.length=0;document.querySelectorAll(".e.q").forEach(el=>qs.push({ts:el.querySelector(".ts").textContent,q:el.dataset.q,el}));renderQ()}
 function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=makeEntry(ev);
  log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
 function replaceBlock(ev){const olds=ev.drop.map(id=>document.querySelector('.e[data-id="'+id+'"]')).filter(Boolean);const anchor=olds[0]||part;
  ev.entries.forEach(n=>log.insertBefore(makeEntry(n),anchor));olds.forEach(el=>el.remove());rebuildQ();layout()}
 const es=new EventSource("/events");
-es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="replace")return replaceBlock(ev);if(ev.type==="zh"){const z=document.querySelector('.e[data-id="'+ev.id+'"] .zh');if(z){z.textContent=ev.zh;z.classList.remove("wait")}return}if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
+es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="replace")return replaceBlock(ev);if(ev.type==="zh"){const z=document.querySelector('.e[data-id="'+ev.id+'"] .zh');if(z){fillZh(z,ev.zh);z.classList.remove("wait")}return}if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
 paint();
 </script></body></html>"""
 
@@ -975,7 +993,7 @@ def start_web(out, port):
     import json
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    page = PAGE.replace("__CONN__", json.dumps(connective_pattern()))
+    page = PAGE.replace("__CONN__", json.dumps(connective_pattern())).replace("__CONNZH__", json.dumps(connective_pattern_zh()))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -1154,8 +1172,8 @@ def main():
     ap.add_argument("--draft-threads", type=int, default=None)
     ap.add_argument("--glossary", action="append", default=[], metavar="FILE",
                     help="course glossary (see glossary/example_biology.txt): right Chinese for technical terms, fixes for words Whisper keeps mishearing; can be given more than once")
-    ap.add_argument("--brackets", choices=["first", "always"], default="first",
-                    help="glossary terms: show the English in brackets after the Chinese only the first time (default) or every time")
+    ap.add_argument("--brackets", choices=["first", "always"], default="always",
+                    help="glossary terms: show the English in brackets after the Chinese every time (default) or only the first time")
     ap.add_argument("--profile", choices=["auto"] + list(PROFILES), default=os.environ.get("CAPTIONS_PROFILE", "auto"),
                     help="battery = least CPU; balanced = + grey draft text; plugged = + a strong model re-reads every ~15 s block and replaces it (needs power); auto (default) = battery on battery, balanced when plugged in (CAPTIONS_PROFILE sets another default)")
     ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")
