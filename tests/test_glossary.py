@@ -54,41 +54,41 @@ class Protect(unittest.TestCase):
 
 
 class Restore(unittest.TestCase):
-    def test_first_use_shows_the_english_then_plain(self):
+    def test_first_use_shows_english_with_chinese_then_chinese_only(self):
         g = make()
         _, tags = g.protect("multi-well plates")
         first = g.restore("放入ZorvaxA。", tags)
-        self.assertEqual(P(first), "放入多孔板（multi-well plates）。")
+        self.assertEqual(P(first), "放入multi-well plates（多孔板）。")
         second = g.restore("再放入ZorvaxA。", tags)
         self.assertEqual(P(second), "再放入多孔板。")
 
-    def test_a_term_without_a_translation_is_shown_as_its_english_in_brackets(self):
+    def test_a_term_without_a_translation_is_shown_as_its_english_alone(self):
         g = make()
         _, tags = g.protect("a newbie tracker here")
-        self.assertEqual(P(g.restore("这里有ZorvaxA。", tags)), "这里有（newbie tracker）。")
-        self.assertEqual(P(g.restore("这里有ZorvaxA。", tags)), "这里有（newbie tracker）。")     # every time
+        self.assertEqual(P(g.restore("这里有ZorvaxA。", tags)), "这里有newbie tracker。")
+        self.assertEqual(P(g.restore("这里有ZorvaxA。", tags)), "这里有newbie tracker。")     # every time
 
     def test_bang_rule_and_the_always_option_bracket_every_time(self):
         g = make()
         _, tags = g.protect("the signal")
-        self.assertEqual(P(g.restore("ZorvaxA强。", tags)), "信号（signal）强。")
-        self.assertEqual(P(g.restore("ZorvaxA强。", tags)), "信号（signal）强。")
+        self.assertEqual(P(g.restore("ZorvaxA强。", tags)), "signal（信号）强。")
+        self.assertEqual(P(g.restore("ZorvaxA强。", tags)), "signal（信号）强。")
         g2 = glossary.Glossary(RULES.splitlines(), always=True)
         _, tags = g2.protect("multi-well plates")
         g2.restore("ZorvaxA", tags)
-        self.assertEqual(P(g2.restore("ZorvaxA", tags)), "多孔板（multi-well plates）")
+        self.assertEqual(P(g2.restore("ZorvaxA", tags)), "multi-well plates（多孔板）")
 
     def test_terms_are_wrapped_in_markers_for_the_web_page(self):
         g = make()
         _, tags = g.protect("multi-well plates")
         out = g.restore("放入ZorvaxA。", tags)
-        self.assertEqual(out, "放入" + glossary.MARK_S + "多孔板（multi-well plates）" + glossary.MARK_E + "。")
-        self.assertEqual(P(out), "放入多孔板（multi-well plates）。")
+        self.assertEqual(out, "放入" + glossary.MARK_S + "multi-well plates（多孔板）" + glossary.MARK_E + "。")
+        self.assertEqual(P(out), "放入multi-well plates（多孔板）。")
 
     def test_no_stray_space_before_chinese_punctuation(self):
         g = make()
         _, tags = g.protect("multi-well plates.")
-        self.assertEqual(P(g.restore("放入ZorvaxA 。", tags)), "放入多孔板（multi-well plates）。")
+        self.assertEqual(P(g.restore("放入ZorvaxA 。", tags)), "放入multi-well plates（多孔板）。")
 
     def test_a_lost_placeholder_is_reported(self):
         g = make()
@@ -110,7 +110,7 @@ class Translator(unittest.TestCase):
             return text.replace("Put it in", "放入")
 
         t = glossary.GlossaryTranslator(base, make())
-        self.assertEqual(P(t("Put it in multi-well plates")), "放入多孔板（multi-well plates）")
+        self.assertEqual(P(t("Put it in multi-well plates")), "放入multi-well plates（多孔板）")
         self.assertEqual(seen, ["Put it in ZorvaxA"])
 
     def test_a_sentence_that_is_only_the_term_is_not_sent_to_the_translator(self):
@@ -118,7 +118,7 @@ class Translator(unittest.TestCase):
             raise AssertionError("must not be called")
 
         t = glossary.GlossaryTranslator(base, make())
-        self.assertEqual(P(t("Multi-well plates.")), "多孔板（multi-well plates）。")
+        self.assertEqual(P(t("Multi-well plates.")), "Multi-well plates（多孔板）。")
 
     def test_falls_back_to_plain_translation_when_a_placeholder_is_lost(self):
         calls = []
@@ -169,8 +169,8 @@ class Tidy(unittest.TestCase):
         self.assertEqual(glossary.tidy_zh("在准 Prime 指纹"), "在准 Prime 指纹")
 
     def test_terms_touch_the_text_around_them(self):
-        t = "分享的" + glossary.MARK_S + "短序列片段（k-mers）" + glossary.MARK_E + " 的数量"
-        self.assertEqual(glossary.tidy_zh(t), "分享的" + glossary.MARK_S + "短序列片段（k-mers）" + glossary.MARK_E + "的数量")
+        t = "分享的" + glossary.MARK_S + "k-mers（短序列片段）" + glossary.MARK_E + " 的数量"
+        self.assertEqual(glossary.tidy_zh(t), "分享的" + glossary.MARK_S + "k-mers（短序列片段）" + glossary.MARK_E + "的数量")
 
     def test_a_chinese_gloss_in_brackets_is_not_doubled(self):
         g = glossary.Glossary(["Swiss Army knife = 万能工具（瑞士军刀）"])

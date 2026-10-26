@@ -124,10 +124,11 @@ calcium indicator line = 钙离子指示剂品系     # translate this term the 
 ./run.sh my_course                  # picks glossary/my_*.txt automatically; or --glossary FILE (may be given more than once)
 ```
 
-Terms are swapped for a placeholder before translation and back afterwards; the English follows every time in brackets
-(多孔板（multi-well plates）) and the whole term is printed in dark red on the web page, so even a wrong guess can be traced back
-(`--brackets first`: bracket only the first time).
-A term that is hard to translate can be written `galvanometric mirror = -`: the sentence then shows just the English in brackets, （galvanometric mirror）. If the translator drops a placeholder, that sentence is translated without the glossary.
+Terms are swapped for a placeholder before translation and back afterwards, and shown as the English you hear with the Chinese in brackets,
+in dark red on the web page: multi-well plates（多孔板）. The English is what the lecturer says, so a wrong guess of the translator
+cannot mislead you (`--brackets first`: English with Chinese only the first time, plain Chinese after that).
+A term that is hard to translate can be written `galvanometric mirror = -`: the sentence then shows just the English.
+If the translator drops a placeholder, that sentence is translated without the glossary.
 Glossary files are re-read whenever they change, so you can add a term in the break and it applies to the next sentence. Glossaries named `glossary/common_*.txt` are used for every course (basic biochemistry, say). See `glossary/example_biology.txt`; your own glossaries in `glossary/` are git-ignored. A larger offline model did not help: NLLB-200 (600M and 1.3B)
 dropped characters, stopped in the middle of long sentences and used 7-12x the CPU of the current translator.
 

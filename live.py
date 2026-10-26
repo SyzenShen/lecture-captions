@@ -926,11 +926,15 @@ def connective_pattern():
     return r"(?<![\w.])(?:" + "|".join(re.escape(x).replace("\\ ", r"\s+") for x in parts) + r")(?![\w])"
 
 
-PAGE = r"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+PAGE = r"""<!doctype html><html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>课堂字幕</title><style>
 :root{--term:#8b1a1a;--bg:#fafaf8;--fg:#1a1a1a;--dim:#8a8a85;--bar:#ecece8;--btn:#fff;--bd:#cfcfc8;--acc:#1a56db;--ok:#177245}
 @media(prefers-color-scheme:dark){:root{--term:#ff9a9a;--bg:#18181a;--fg:#f2f2ee;--dim:#8d8d96;--bar:#242428;--btn:#2e2e33;--bd:#45454c;--acc:#7aa7ff;--ok:#5fd08f}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"PingFang SC",system-ui,sans-serif}
+*{box-sizing:border-box}
+/* Chinese must name its font FIRST: with -apple-system first, Safari picks whatever CJK font the system cascade offers for a glyph, which on a
+   Mac with Office installed is sometimes Microsoft YaHei. English keeps the system font. */
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"PingFang SC","Hiragino Sans GB","Heiti SC",sans-serif}
+.e,#partial,#qlist{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif}.zh{font-family:"PingFang SC","Hiragino Sans GB","Heiti SC",sans-serif}
 #top{position:sticky;top:0;z-index:2}header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--bar);border-bottom:1px solid var(--bd)}
 button{font:inherit;font-size:15px;padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--btn);color:var(--fg);cursor:pointer}
 button:hover{border-color:var(--acc)}button.on{background:var(--acc);border-color:var(--acc);color:#fff}
@@ -980,7 +984,7 @@ function renderQ(){const bar=document.getElementById("qbar"),box=document.getEle
   r.onclick=()=>{if(document.body.classList.contains("focus"))setFocus(false);x.el.scrollIntoView({block:"center",behavior:"smooth"});x.el.classList.add("flash");setTimeout(()=>x.el.classList.remove("flash"),1500)};box.append(r)})}
 function makeEntry(ev){const d=document.createElement("div");d.className="e"+(ev.q?" q":"");
  const t=document.createElement("span");t.className="ts";t.textContent=ev.ts;d.append(t,marked(ev.en));
- d.dataset.id=ev.id;d.dataset.q=ev.q||"";const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");if(ev.zh)fillZh(z,ev.zh);else z.textContent="…";d.append(z);return d}
+ d.dataset.id=ev.id;d.dataset.q=ev.q||"";const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");z.lang="zh-Hans";if(ev.zh)fillZh(z,ev.zh);else z.textContent="…";d.append(z);return d}
 function rebuildQ(){qs.length=0;document.querySelectorAll(".e.q").forEach(el=>qs.push({ts:el.querySelector(".ts").textContent,q:el.dataset.q,el}));renderQ()}
 function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=makeEntry(ev);
  log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
@@ -1176,7 +1180,7 @@ def main():
     ap.add_argument("--glossary", action="append", default=[], metavar="FILE",
                     help="course glossary (see glossary/example_biology.txt): right Chinese for technical terms, fixes for words Whisper keeps mishearing; can be given more than once")
     ap.add_argument("--brackets", choices=["first", "always"], default="always",
-                    help="glossary terms: show the English in brackets after the Chinese every time (default) or only the first time")
+                    help="glossary terms are shown as English（中文）: every time (default), or only the first time, plain Chinese after that")
     ap.add_argument("--profile", choices=["auto"] + list(PROFILES), default=os.environ.get("CAPTIONS_PROFILE", "auto"),
                     help="battery = least CPU; balanced = + grey draft text; plugged = + a strong model re-reads every ~15 s block and replaces it (needs power); auto (default) = battery on battery, balanced when plugged in (CAPTIONS_PROFILE sets another default)")
     ap.add_argument("--refine-model", default=None, help="second pass: re-decode every block with this model (e.g. large-v3-turbo) and replace the live text; set by --profile plugged")

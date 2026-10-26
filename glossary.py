@@ -2,12 +2,11 @@
 
 A glossary is a plain text file, one rule per line (UTF-8, '#' starts a comment):
 
-    calcium indicator line = 钙离子指示剂品系       # translate this term the way I want
-    galvanometric mirror = -                        # hard to translate: show the English in brackets instead
-    multi-well plate = 多孔板 !                      # always show the English in brackets after the Chinese
+    calcium indicator line = 钙离子指示剂品系       # shown as: calcium indicator lines（钙离子指示剂品系）
+    galvanometric mirror = -                        # hard to translate: shown as the English alone
     ~ multi-world plate = multi-well plate          # Whisper keeps hearing this wrongly: fix the English itself
 
-Without "!" the English follows the Chinese only the first time the term appears in a session.
+A term is shown in English with the Chinese in brackets, so it can be recognised when spoken: multi-well plates（多孔板）.
 Terms match case-insensitively, a space also matches a hyphen, and a plural "s"/"es" is accepted.
 """
 import os
@@ -136,20 +135,19 @@ class Glossary:
         return "".join(out), tags
 
     def restore(self, zh, tags):
-        """Put the Chinese terms back. The first time a term is used in a session its English follows in brackets.
-        Returns None when the translator lost a placeholder (the caller then translates without the glossary)."""
+        """Put the terms back as "English（中文）". Returns None when the translator lost a placeholder (the caller then translates without the glossary)."""
         for tag in tags:
             if not re.search(re.escape(TAG) + r"\s?" + re.escape(tag[len(TAG):]), zh, re.I):
                 return None
         for tag, (english, chinese, bang) in tags.items():
             pat = re.compile(re.escape(TAG) + r"\s?" + re.escape(tag[len(TAG):]), re.I)
-            if chinese is None:                          # hard to translate: the English in brackets is the term
-                shown = f"（{english}）"
-            elif "（" in chinese or "(" in chinese:         # the glossary author already wrote the English / a gloss
+            if chinese is None:                          # hard to translate: the English alone is the term
+                shown = english
+            elif "（" in chinese or "(" in chinese:         # the glossary author already wrote a gloss in brackets
                 shown = chinese
             elif bang or self.always or chinese not in self.seen:
                 self.seen.add(chinese)
-                shown = f"{chinese}（{english.lower()}）"
+                shown = f"{english}（{chinese}）"
             else:
                 shown = chinese
             shown = MARK_S + shown + MARK_E
