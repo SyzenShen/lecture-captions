@@ -11,9 +11,15 @@ import live  # noqa: E402
 class FakeOut:
     def __init__(self):
         self.shown = []
+        self.web = []          # what the web page gets as its grey line
+        self.rows = []         # what the web page gets as provisional rows
 
-    def partial(self, text):
+    def partial(self, text, web_text=None):
         self.shown.append(text)
+        self.web.append(text if web_text is None else web_text)
+
+    def drafts(self, sentences):
+        self.rows.append(list(sentences))
 
     def _clear_partial(self):
         self.shown.append(None)
@@ -45,6 +51,26 @@ class DisplayTest(unittest.TestCase):
         self.d.refined(3.0)
         self.assertTrue(self.d.has_draft(3.0))          # replaced by accurate text: it needs no draft any more
         self.assertFalse(self.d.has_draft(4.0))
+
+    def test_complete_draft_sentences_become_rows_and_the_rest_stays_the_grey_line(self):
+        self.d.set_draft(5.0, "So today we start. And then we look at the")
+        self.assertEqual(self.out.rows[-1], ["So today we start."])
+        self.assertEqual(self.out.web[-1], "And then we look at the")
+        self.assertEqual(self.out.shown[-1], "So today we start. And then we look at the")      # the terminal still shows everything
+
+    def test_a_fully_complete_draft_leaves_nothing_in_the_grey_line(self):
+        self.d.set_draft(5.0, "That is all. Thank you very much.")
+        self.assertEqual(self.out.rows[-1], ["That is all.", "Thank you very much."])
+        self.assertEqual(self.out.web[-1], "")
+
+    def test_an_unfinished_sentence_with_a_dangling_word_is_not_promoted(self):
+        self.d.set_draft(5.0, "We look at the structure of the.")
+        self.assertEqual(self.out.rows[-1], [])
+
+    def test_rows_disappear_when_the_accurate_text_arrives(self):
+        self.d.set_draft(5.0, "So today we start.")
+        self.d.refined(5.0)
+        self.assertEqual(self.out.rows[-1], [])
 
     def test_a_draft_is_updated_in_place(self):
         self.d.set_draft(5.0, "so today")

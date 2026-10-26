@@ -15,6 +15,7 @@ web page shows the result. Built by a non-native listener for a MacBook in the f
 - **Silero VAD** finds pauses, so it works on quiet recordings and in noisy rooms (a plain loudness threshold did not).
 - Saves the session audio and a running transcript (turn off with `--no-record`); press `s` for a Markdown file of the whole session.
 - **Questions are highlighted** (accent border) and the **three most recent are pinned** in a bar at the top, so you can see what is being discussed when the room starts talking. The Markdown notes end with a list of every question asked.
+- **Provisional rows**: finished sentences of the grey draft are listed in the log at once, marked 暂定 (provisional) and in grey, and are replaced by the accurate sentence when it arrives; only the unfinished sentence stays on the grey line below.
 - **Connectives in bold** (`b` toggles): but, because, so, therefore, if, for example ... are printed bold in the English, so the structure of a long sentence is easier to follow ("and"/"or" are left out: they are everywhere). The Chinese line is in regular weight so its connectives (但是, 因为, 所以, 如果 ...) stand out in bold too.
 - **Focus mode** (`f`): only the last three sentences, larger; click a sentence to open its Chinese. Read less, listen more; the full transcript is saved for after class.
 - Works on a recording too: `./run.sh --file lecture.mp3`.

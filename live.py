@@ -179,6 +179,7 @@ class Output:
         self.lock = threading.Lock()
         self.subs = []             # web clients (queues) receiving live events
         self.partial_shown = False
+        self.last_drafts = []
         self.paused = False
         self.toggle_pause = None   # set by main() in live mode
         self.show_zh = True        # toggled with the 'c' key; the Chinese is still translated and saved when hidden
@@ -193,9 +194,16 @@ class Output:
             sys.stdout.write("\r\033[2K")
             self.partial_shown = False
 
-    def partial(self, en):
-        """Unfinished sentence: dim gray, single line, replaced by the final version."""
-        self.broadcast({"type": "partial", "text": en})
+    def drafts(self, sentences):
+        """Draft sentences that are already complete: the web page lists them as provisional rows until the accurate text arrives."""
+        if sentences != self.last_drafts:
+            self.last_drafts = list(sentences)
+            self.broadcast({"type": "drafts", "sentences": self.last_drafts})
+
+    def partial(self, en, web_text=None):
+        """Unfinished sentence: dim gray, single line, replaced by the final version. The web page gets only the part that is
+        not a complete draft sentence (web_text), because the complete ones are listed as rows."""
+        self.broadcast({"type": "partial", "text": en if web_text is None else web_text})
         width = shutil.get_terminal_size().columns
         sys.stdout.write("\r\033[2K\033[90m" + ("… " + en)[-(width - 2):] + "\033[0m")
         sys.stdout.flush()
@@ -303,9 +311,21 @@ class Display:
         self.lock = threading.Lock()
 
     def _show(self):
-        shown = " ".join([self.pending] + [d for _, d in sorted(self.drafts.items())]).strip()
+        texts = [self.pending] + [d for _, d in sorted(self.drafts.items())]
+        shown = " ".join(texts).strip()
+        complete, tails = [], []
+        for text in texts[1:]:                  # complete draft sentences become rows on the web page, the rest stays the grey line
+            parts = split_sentences(text)
+            if not parts:
+                continue
+            if SENTENCE_END.search(parts[-1]) and not looks_unfinished(parts[-1]):
+                complete.extend(parts)
+            else:
+                complete.extend(parts[:-1])
+                tails.append(parts[-1])
+        self.out.drafts(complete)
         if shown:
-            self.out.partial(shown)
+            self.out.partial(shown, web_text=" ".join([self.pending] + tails).strip())
         else:
             self.out._clear_partial()
 
@@ -678,7 +698,8 @@ def worker(q, model, tq, out, seg, display):
             secs = 0.0
         # a block end is a sentence end (the refined version of the block replaces whole sentences); a substantial
         # sentence that ended on a real pause is done too: don't wait for a possible continuation
-        if secs > MAX_PENDING or ends or (not forced and not looks_unfinished(text) and len(text.split()) >= 8):
+        done = SENTENCE_END.search(text) and not looks_unfinished(text)      # "Yes." / "That is why." need not wait for a continuation
+        if secs > MAX_PENDING or ends or (not forced and not looks_unfinished(text) and (done or len(text.split()) >= 8)):
             finish()
             return
         display.set_pending(text)
@@ -942,7 +963,7 @@ button:hover{border-color:var(--acc)}button.on{background:var(--acc);border-colo
 main{padding:12px 16px 90px;max-width:1100px;margin:0 auto;font-size:var(--fs,26px);line-height:1.45}
 .e{margin:0 0 .9em}.ts{color:var(--dim);font-size:.5em;margin-right:.6em;font-variant-numeric:tabular-nums}
 .zh{font-weight:400;margin-top:.15em}.zh b.cn{font-weight:800}.term{color:var(--term);margin:0 .12em}.zh.wait{color:var(--dim);font-weight:400}body.nozh .zh{visibility:hidden}   /* keep the space: English must not move */
-#partial{color:var(--fg);opacity:.62}   /* the draft: readable, but visibly not final */
+#partial,.e.prov{color:var(--fg);opacity:.62}   /* the draft: readable, but visibly not final */
 .e.q{border-left:4px solid var(--acc);padding-left:.55em}
 /* focus mode: only the last three sentences, bigger; the Chinese opens per sentence on click */
 body.focus .e:not(.vis){display:none}body.focus main{font-size:calc(var(--fs)*1.45)}body.focus .e{cursor:pointer}
@@ -955,9 +976,9 @@ b.cn{font-weight:700}body.nocn b.cn{font-weight:inherit}body.paused main{opacity
 <div id="top"><header><button id="pz">⏸ 暂停</button><button id="tz">隐藏中文</button><button id="fz">专注</button><button id="cn">连接词</button><button id="sv">保存 .md</button><button id="m">A−</button><button id="p">A+</button>
 <span class="hint">快捷键：p 暂停 · c 隐藏/显示中文 · f 专注 · b 连接词加粗 · s 保存</span><span id="msg"></span></header>
 <div id="qbar" hidden><span class="qt">最近的问题</span><div id="qlist"></div></div></div>
-<main id="log"><div id="partial"></div></main>
+<main id="log"><div id="drafts"></div><div id="partial"></div></main>
 <script>
-const log=document.getElementById("log"),part=document.getElementById("partial"),tz=document.getElementById("tz"),msg=document.getElementById("msg");
+const log=document.getElementById("log"),part=document.getElementById("partial"),dr=document.getElementById("drafts"),tz=document.getElementById("tz"),msg=document.getElementById("msg");
 const fzb=document.getElementById("fz"),cnb=document.getElementById("cn"),FOCUS_N=3,CONN=new RegExp(__CONN__,"gi"),CONNZH=new RegExp(__CONNZH__,"g");
 let fs=26;try{fs=+localStorage.fs||26;if(localStorage.nozh==="1")document.body.classList.add("nozh");if(localStorage.focus==="1")document.body.classList.add("focus");if(localStorage.nocn==="1")document.body.classList.add("nocn")}catch(e){}
 function paint(){document.documentElement.style.setProperty("--fs",fs+"px");tz.textContent=document.body.classList.contains("nozh")?"显示中文":"隐藏中文";tz.classList.toggle("on",document.body.classList.contains("nozh"));cnb.classList.toggle("on",!document.body.classList.contains("nocn"));
@@ -987,11 +1008,13 @@ function makeEntry(ev){const d=document.createElement("div");d.className="e"+(ev
  d.dataset.id=ev.id;d.dataset.q=ev.q||"";const z=document.createElement("div");z.className="zh"+(ev.zh?"":" wait");z.lang="zh-Hans";if(ev.zh)fillZh(z,ev.zh);else z.textContent="…";d.append(z);return d}
 function rebuildQ(){qs.length=0;document.querySelectorAll(".e.q").forEach(el=>qs.push({ts:el.querySelector(".ts").textContent,q:el.dataset.q,el}));renderQ()}
 function add(ev){const near=innerHeight+scrollY>document.body.scrollHeight-160;const d=makeEntry(ev);
- log.insertBefore(d,part);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
-function replaceBlock(ev){const olds=ev.drop.map(id=>document.querySelector('.e[data-id="'+id+'"]')).filter(Boolean);const anchor=olds[0]||part;
+ log.insertBefore(d,dr);if(ev.q){qs.push({ts:ev.ts,q:ev.q,el:d});renderQ()}layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
+function replaceBlock(ev){const olds=ev.drop.map(id=>document.querySelector('.e[data-id="'+id+'"]')).filter(Boolean);const anchor=olds[0]||dr;
  ev.entries.forEach(n=>log.insertBefore(makeEntry(n),anchor));olds.forEach(el=>el.remove());rebuildQ();layout()}
+function renderDrafts(list){const near=innerHeight+scrollY>document.body.scrollHeight-160;dr.textContent="";
+ list.forEach(t=>{const d=document.createElement("div");d.className="e prov";const m=document.createElement("span");m.className="ts";m.textContent="暂定";d.append(m,t);dr.append(d)});layout();if(near||document.body.classList.contains("focus"))scrollTo(0,document.body.scrollHeight)}
 const es=new EventSource("/events");
-es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="replace")return replaceBlock(ev);if(ev.type==="zh"){const z=document.querySelector('.e[data-id="'+ev.id+'"] .zh');if(z){fillZh(z,ev.zh);z.classList.remove("wait")}return}if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
+es.onmessage=m=>{const ev=JSON.parse(m.data);if(ev.type==="drafts")return renderDrafts(ev.sentences);if(ev.type==="state")return setPaused(ev.paused);if(ev.type==="replace")return replaceBlock(ev);if(ev.type==="zh"){const z=document.querySelector('.e[data-id="'+ev.id+'"] .zh');if(z){fillZh(z,ev.zh);z.classList.remove("wait")}return}if(ev.type==="final"){part.textContent="";add(ev)}else{part.textContent=ev.text?"… "+ev.text:""}};
 paint();
 </script></body></html>"""
 
